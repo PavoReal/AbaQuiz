@@ -33,8 +33,15 @@ wheels/
 *.swo
 *~
 
-# Data files
+# Data files - track compressed only
 data/raw/**/*.pdf
+data/processed/**/*.md
+data/processed/**/*.json
+!data/raw/**/*.pdf.gz
+!data/processed/**/*.md.gz
+!data/processed/**/*.json.gz
+
+# Database
 data/abaquiz.db
 *.db
 
