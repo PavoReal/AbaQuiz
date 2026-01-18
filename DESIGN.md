@@ -169,6 +169,8 @@ AbaQuiz/
 | timezone | TEXT | User timezone (default: 'America/Los_Angeles') |
 | is_subscribed | BOOLEAN | Receiving daily questions |
 | daily_extra_count | INTEGER | Extra questions used today |
+| focus_preferences | TEXT (JSON) | List of preferred content areas (for weighting) |
+| onboarding_complete | BOOLEAN | Has completed onboarding flow |
 | created_at | TIMESTAMP | Registration date |
 | updated_at | TIMESTAMP | Last update |
 
@@ -220,8 +222,8 @@ AbaQuiz/
 |---------|-------------|
 | `/start` | Register and subscribe to daily questions |
 | `/stop` | Unsubscribe from daily questions |
-| `/quiz` | Request an extra practice question |
-| `/quiz [area]` | Request question from specific content area |
+| `/quiz` | Request an extra practice question (shows area menu) |
+| `/quiz [area]` | Request question from specific content area (e.g., `/quiz ethics`) |
 | `/stats` | View personal statistics and progress |
 | `/streak` | View current and longest streak |
 | `/achievements` | View unlocked badges |
@@ -401,6 +403,261 @@ The question generator uses Claude API with full context from pre-processed mark
 
 ---
 
+## Question Pool Management
+
+Questions are **pre-generated** and stored in the database to reduce API latency and costs during delivery.
+
+### Pool Strategy
+
+| Aspect | Approach |
+|--------|----------|
+| Storage | Questions cached in `questions` table |
+| Generation | Scheduled batch job (daily/weekly) |
+| Per-area minimum | Configurable threshold (e.g., 20 questions) |
+| Deduplication | Track which questions each user has seen in `user_answers` |
+
+### Batch Generation Job
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Scheduled Job: generate_question_pool (daily)          │
+├─────────────────────────────────────────────────────────┤
+│  1. For each content_area:                              │
+│     - Count available unseen questions                  │
+│     - If below threshold, generate batch via Claude API │
+│  2. Validate generated questions (JSON schema check)    │
+│  3. Store in questions table                            │
+│  4. Log generation stats for admin summary              │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Question Type Distribution
+
+- **80% Multiple Choice** (4 options: A, B, C, D)
+- **20% True/False**
+
+Configurable in `config.json`:
+```json
+{
+  "question_generation": {
+    "pool_threshold_per_area": 20,
+    "batch_size": 10,
+    "type_distribution": {
+      "multiple_choice": 0.8,
+      "true_false": 0.2
+    }
+  }
+}
+```
+
+---
+
+## Question Selection Algorithm
+
+Questions are selected using a **hybrid approach**: mostly random across content areas, with periodic targeting of user weak areas.
+
+### Selection Logic
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  select_question_for_user(user_id):                     │
+├─────────────────────────────────────────────────────────┤
+│  1. Get user's answer history and focus preferences     │
+│  2. Roll random number (1-5)                            │
+│     - If roll == 1: target weak area (lowest accuracy)  │
+│     - Else: weighted random (favor focus preferences)   │
+│  3. Select content_area based on step 2                 │
+│  4. Query unseen questions for user in that area        │
+│  5. Return random question from result set              │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Weak Area Targeting
+
+- **Trigger ratio**: 1 in 5 questions (20%) - configurable
+- **Calculation**: Content area with lowest accuracy (minimum 5 answers required)
+- **Fallback**: If no weak area identified, use random selection
+
+### Focus Preferences
+
+During onboarding, users select content areas to emphasize:
+- Selected areas receive **2x weight** in random selection
+- Non-selected areas still included (1x weight)
+- All areas remain in rotation to ensure comprehensive coverage
+
+### Configuration
+
+```json
+{
+  "question_selection": {
+    "weak_area_ratio": 0.2,
+    "min_answers_for_weak_calc": 5,
+    "focus_preference_weight": 2.0
+  }
+}
+```
+
+---
+
+## User Onboarding Flow
+
+New users go through a **guided onboarding** after `/start`:
+
+### Flow Diagram
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   /start     │────►│   Timezone   │────►│    Focus     │────►│  How It      │
+│   Welcome    │     │   Selection  │     │    Areas     │     │  Works       │
+└──────────────┘     └──────────────┘     └──────────────┘     └──────┬───────┘
+                                                                       │
+                                                                       ▼
+                                                               ┌──────────────┐
+                                                               │ First Quiz   │
+                                                               │ Question     │
+                                                               └──────────────┘
+```
+
+### Step Details
+
+#### 1. Welcome Message
+```
+Welcome to AbaQuiz! 🎓
+
+I'll help you prepare for the BCBA exam with daily quiz questions
+on Applied Behavior Analysis.
+
+Let's set up your preferences...
+```
+
+#### 2. Timezone Selection
+- Inline keyboard with common US timezones
+- Option to type timezone manually
+- Default: America/Los_Angeles (PST)
+
+#### 3. Focus Area Selection
+- Multi-select inline keyboard showing all BCBA content areas
+- Users can select multiple areas to emphasize
+- "All areas equally" option available
+- Affects question weighting (see Selection Algorithm)
+
+#### 4. How It Works
+```
+Here's how AbaQuiz works:
+
+📅 Daily Questions: 8 AM and 8 PM (your time)
+📝 On-demand: Use /quiz anytime for extra practice
+📊 Track progress: Use /stats to see your performance
+🔥 Build streaks: Answer at least one question daily!
+
+Ready for your first question?
+```
+
+#### 5. First Question
+- Immediately deliver first quiz question
+- Starts the user's journey
+
+---
+
+## Streak Rules
+
+### Day-Based Streaks
+
+Streaks are calculated on a **calendar day basis** in the user's timezone:
+
+| Scenario | Streak Result |
+|----------|---------------|
+| Answer morning AND evening question | Streak continues |
+| Answer only morning question | Streak continues |
+| Answer only evening question | Streak continues |
+| Answer no questions that day | Streak resets to 0 |
+
+### Streak Calculation
+
+```python
+def update_streak(user_id: int, answer_date: date) -> int:
+    last_answer = get_last_answer_date(user_id)
+
+    if last_answer is None:
+        return 1  # First answer ever
+
+    days_diff = (answer_date - last_answer).days
+
+    if days_diff == 0:
+        return current_streak  # Same day, no change
+    elif days_diff == 1:
+        return current_streak + 1  # Consecutive day
+    else:
+        return 1  # Streak broken, start fresh
+```
+
+---
+
+## Question Answer Expiration
+
+**Questions never expire.** Users can answer any previously delivered question at any time.
+
+### Behavior
+
+- Unanswered questions remain interactive (inline buttons stay active)
+- Users can scroll back in chat history and answer old questions
+- All answers count toward stats regardless of when answered
+- Streak only considers the calendar day the answer was submitted (not when question was sent)
+
+### Database Tracking
+
+The `user_answers` table tracks `answered_at` timestamp, enabling:
+- Analytics on response time (immediate vs delayed)
+- Identification of users who batch-answer old questions
+
+---
+
+## Error Handling
+
+### Claude API Failures
+
+When question generation or delivery fails:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  API Call Failure Handling                              │
+├─────────────────────────────────────────────────────────┤
+│  1. Retry up to 3 times with exponential backoff        │
+│     - Attempt 1: immediate                              │
+│     - Attempt 2: wait 5 seconds                         │
+│     - Attempt 3: wait 15 seconds                        │
+│  2. If all retries fail:                                │
+│     - Log error with full context                       │
+│     - Notify admins (if alerts enabled)                 │
+│     - Skip this delivery slot for affected user         │
+│     - User receives question at next scheduled time     │
+│  3. Do NOT send error message to user                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Telegram Delivery Failures
+
+| Error Type | Action |
+|------------|--------|
+| User blocked bot | Mark user as unsubscribed, stop deliveries |
+| Rate limited | Queue and retry with backoff |
+| Network error | Retry 3x, then skip and log |
+| Invalid chat_id | Log error, notify admin |
+
+### Admin Notifications
+
+Failed operations trigger real-time alerts to admins (if enabled):
+```
+⚠️ Delivery Failed
+
+User: @username (123456789)
+Error: Claude API timeout after 3 retries
+Time: 2026-01-13 08:00:05 PST
+Action: Skipped morning delivery
+```
+
+---
+
 ## Gamification Details
 
 ### Points System
@@ -506,12 +763,13 @@ services:
 
 - [ ] Web-based admin dashboard
 - [ ] Question review/approval workflow
-- [ ] Leaderboards
 - [ ] Spaced repetition algorithm
 - [ ] Multiple language support
 - [ ] Premium tier with additional features
 - [ ] Study groups/cohorts
 - [ ] Mock exam mode
+
+> **Note:** Leaderboards are intentionally excluded to keep individual progress private.
 
 ---
 
@@ -866,5 +1124,5 @@ config/
 
 ---
 
-*Document Version: 1.1*
-*Last Updated: 2026-01-13*
+*Document Version: 1.2*
+*Last Updated: 2026-01-16*

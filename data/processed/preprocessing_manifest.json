@@ -1,0 +1,36 @@
+{
+  "processed": {
+    "ACE-Provider-Handbook.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-16T22:18:35.546029",
+      "pages": 13,
+      "input_tokens": 10249,
+      "output_tokens": 7193,
+      "api_calls": 8,
+      "content_areas": [
+        "Ethics"
+      ],
+      "output_files": [
+        "section_2_applications/2.1_ethics.md"
+      ],
+      "error": null
+    },
+    "BCBA-Handbook.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-16T22:27:23.420099",
+      "pages": 78,
+      "input_tokens": 97065,
+      "output_tokens": 55899,
+      "api_calls": 68,
+      "content_areas": [
+        "Ethics"
+      ],
+      "output_files": [
+        "section_2_applications/2.1_ethics.md"
+      ],
+      "error": null
+    }
+  },
+  "version": 1,
+  "last_updated": "2026-01-16T22:27:23.421240"
+}

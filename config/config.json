@@ -1,0 +1,62 @@
+{
+  "bot": {
+    "default_timezone": "America/Los_Angeles",
+    "morning_quiz_hour": 8,
+    "evening_quiz_hour": 20
+  },
+  "admin": {
+    "admin_users": [],
+    "summary_time": "09:00",
+    "default_summary_enabled": true,
+    "default_alerts_enabled": true
+  },
+  "rate_limit": {
+    "extra_questions_per_day": 5,
+    "requests_per_minute": 10
+  },
+  "question_generation": {
+    "pool_threshold_per_area": 20,
+    "batch_size": 10,
+    "type_distribution": {
+      "multiple_choice": 0.8,
+      "true_false": 0.2
+    },
+    "model": "claude-sonnet-4-20250514"
+  },
+  "question_selection": {
+    "weak_area_ratio": 0.2,
+    "min_answers_for_weak_calc": 5,
+    "focus_preference_weight": 2.0
+  },
+  "error_handling": {
+    "max_retries": 3,
+    "retry_delays": [0, 5, 15]
+  },
+  "rejection_messages": [
+    "Your access has been extinguished. No reinforcement for you! (ID: {user_id})",
+    "This interaction is on extinction. Your ID ({user_id}) has been noted.",
+    "Access denied. Consider this a punishment procedure. (ID: {user_id})",
+    "You've been placed on a DRO schedule... of zero access. (ID: {user_id})"
+  ],
+  "preprocessing": {
+    "model": "claude-haiku-4-5",
+    "max_tokens_per_chunk": 4000,
+    "delay_between_calls": 1.2
+  },
+  "pricing": {
+    "anthropic": {
+      "claude-sonnet-4-20250514": {
+        "input_per_million": 3.00,
+        "output_per_million": 15.00,
+        "cache_write_per_million": 3.75,
+        "cache_read_per_million": 0.30
+      },
+      "claude-haiku-4-5-20250514": {
+        "input_per_million": 1.00,
+        "output_per_million": 5.00,
+        "cache_write_per_million": 1.25,
+        "cache_read_per_million": 0.10
+      }
+    }
+  }
+}

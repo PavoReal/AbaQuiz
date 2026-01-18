@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  abaquiz:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: abaquiz-bot
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - DATABASE_PATH=/app/data/abaquiz.db
+      - LOG_LEVEL=INFO
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
