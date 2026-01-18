@@ -39,7 +39,7 @@
     "You've been placed on a DRO schedule... of zero access. (ID: {user_id})"
   ],
   "preprocessing": {
-    "model": "claude-haiku-4-5",
+    "model": "claude-sonnet-4-5",
     "max_tokens_per_chunk": 4000,
     "delay_between_calls": 1.2
   },

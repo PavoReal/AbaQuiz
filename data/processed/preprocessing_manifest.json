@@ -1,36 +1,110 @@
 {
   "processed": {
-    "ACE-Provider-Handbook.pdf": {
+    "BCBA-Handbook.pdf": {
       "status": "completed",
-      "processed_at": "2026-01-16T22:18:35.546029",
-      "pages": 13,
-      "input_tokens": 10249,
-      "output_tokens": 7193,
-      "api_calls": 8,
-      "content_areas": [
-        "Ethics"
-      ],
+      "processed_at": "2026-01-17T21:10:51.991966",
+      "pages": 78,
+      "input_tokens": 178918,
+      "output_tokens": 16384,
+      "api_calls": 1,
+      "content_area": null,
       "output_files": [
-        "section_2_applications/2.1_ethics.md"
+        "core/handbook.md"
       ],
       "error": null
     },
-    "BCBA-Handbook.pdf": {
+    "BCBA-TCO-6th-Edition.pdf": {
       "status": "completed",
-      "processed_at": "2026-01-16T22:27:23.420099",
-      "pages": 78,
-      "input_tokens": 97065,
-      "output_tokens": 55899,
-      "api_calls": 68,
-      "content_areas": [
-        "Ethics"
-      ],
+      "processed_at": "2026-01-17T21:11:49.094603",
+      "pages": 3,
+      "input_tokens": 7888,
+      "output_tokens": 3106,
+      "api_calls": 1,
+      "content_area": null,
       "output_files": [
-        "section_2_applications/2.1_ethics.md"
+        "core/tco.md"
+      ],
+      "error": null
+    },
+    "BCBA-Task-List-5th-Edition.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-17T21:12:28.177044",
+      "pages": 5,
+      "input_tokens": 10143,
+      "output_tokens": 2146,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "core/task_list.md"
+      ],
+      "error": null
+    },
+    "Ethics-Code-for-Behavior-Analysts.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-17T21:18:33.335762",
+      "pages": 19,
+      "input_tokens": 46543,
+      "output_tokens": 15598,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "ethics/ethics_code.md"
+      ],
+      "error": null
+    },
+    "Supervisor-Training-Curriculum.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-17T21:20:39.408165",
+      "pages": 13,
+      "input_tokens": 26171,
+      "output_tokens": 5459,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "supervision/curriculum.md"
+      ],
+      "error": null
+    },
+    "ABA-Glossary-Workbook.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-17T21:22:41.488470",
+      "pages": 12,
+      "input_tokens": 23200,
+      "output_tokens": 3957,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "reference/glossary.md"
+      ],
+      "error": null
+    },
+    "ABA-Terminology-Acronyms.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-17T21:25:07.037987",
+      "pages": 19,
+      "input_tokens": 35867,
+      "output_tokens": 5656,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "reference/key_terms.md"
+      ],
+      "error": null
+    },
+    "PECS-Glossary.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-17T21:29:20.398443",
+      "pages": 21,
+      "input_tokens": 42510,
+      "output_tokens": 9200,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "reference/glossary.md"
       ],
       "error": null
     }
   },
-  "version": 1,
-  "last_updated": "2026-01-16T22:27:23.421240"
+  "version": 2,
+  "last_updated": "2026-01-17T21:29:20.398485"
 }
