@@ -1,6 +1,8 @@
 """
 CLI for running the PDF preprocessing pipeline.
 
+Uses Claude's native PDF support for direct extraction and structuring.
+
 Usage:
     python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
     python -m src.preprocessing.run_preprocessing -f data/raw/bacb/Ethics-Code-for-Behavior-Analysts.pdf -v
@@ -18,19 +20,10 @@ from typing import Any
 from dotenv import load_dotenv
 
 from src.config.logging import get_logger, setup_logging
-from src.preprocessing.content_processor import (
-    ContentProcessor,
+from src.preprocessing.pdf_processor import (
+    PDFProcessor,
     PersistentRateLimitError,
-    SUPPLEMENTARY_DOCUMENTS,
-    get_content_area_file_mapping,
     get_document_output_path,
-    estimate_tokens,
-)
-from src.preprocessing.pdf_extractor import (
-    extract_pdf,
-    pages_to_text,
-    save_raw_extraction,
-    load_raw_extraction,
 )
 
 logger = get_logger(__name__)
@@ -45,13 +38,41 @@ def discover_pdfs(input_dir: Path) -> list[Path]:
     return sorted(pdfs)
 
 
+def prompt_for_pdf(pdf_name: str, output_path: str | None, index: int, total: int) -> str:
+    """
+    Prompt user whether to process a PDF.
+
+    Returns:
+        'y' to process, 's' to skip, 'q' to quit, 'a' to process all remaining
+    """
+    if output_path:
+        print(f"\n[{index}/{total}] {pdf_name}")
+        print(f"  Output: {output_path}")
+    else:
+        print(f"\n[{index}/{total}] {pdf_name}")
+        print("  Status: Will be skipped (not BCBA material)")
+
+    while True:
+        response = input("  Process? [Y]es / [s]kip / [a]ll remaining / [q]uit: ").strip().lower()
+        if response in ("", "y", "yes"):
+            return "y"
+        elif response in ("s", "skip"):
+            return "s"
+        elif response in ("a", "all"):
+            return "a"
+        elif response in ("q", "quit"):
+            return "q"
+        else:
+            print("  Invalid input. Enter y, s, a, or q.")
+
+
 def load_manifest(output_dir: Path) -> dict[str, Any]:
     """Load the preprocessing manifest tracking processed PDFs."""
     manifest_path = output_dir / MANIFEST_FILENAME
     if manifest_path.exists():
         with open(manifest_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"processed": {}, "version": 1}
+    return {"processed": {}, "version": 2}
 
 
 def save_manifest(output_dir: Path, manifest: dict[str, Any]) -> None:
@@ -69,7 +90,6 @@ def is_pdf_processed(manifest: dict[str, Any], pdf_path: Path) -> bool:
     entry = manifest.get("processed", {}).get(pdf_key)
     if not entry:
         return False
-    # Check if processing completed successfully
     return entry.get("status") == "completed"
 
 
@@ -87,7 +107,7 @@ def mark_pdf_processed(
         "input_tokens": result.get("input_tokens", 0),
         "output_tokens": result.get("output_tokens", 0),
         "api_calls": result.get("api_calls", 0),
-        "content_areas": result.get("content_areas", []),
+        "content_area": result.get("content_area"),
         "output_files": result.get("output_files", []),
         "error": result.get("error"),
     }
@@ -108,9 +128,10 @@ def get_config() -> dict[str, Any]:
 def ensure_output_dirs(output_dir: Path) -> None:
     """Create output directory structure."""
     subdirs = [
-        "section_1_foundations",
-        "section_2_applications",
-        "supplementary",
+        "core",
+        "ethics",
+        "supervision",
+        "reference",
     ]
 
     for subdir in subdirs:
@@ -120,18 +141,23 @@ def ensure_output_dirs(output_dir: Path) -> None:
 async def process_single_pdf(
     pdf_path: Path,
     output_dir: Path,
-    processor: ContentProcessor,
-    raw_extraction_dir: Path,
-    skip_extraction: bool = False,
+    processor: PDFProcessor,
     dry_run: bool = False,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """
-    Process a single PDF file through the pipeline.
+    Process a single PDF file using Claude's native PDF support.
 
     Returns dict with processing stats.
     """
     pdf_name = pdf_path.name
+
+    # Check if this document should be skipped
+    output_path_rel = get_document_output_path(pdf_name)
+    if output_path_rel is None:
+        logger.info(f"Skipping {pdf_name} (not BCBA exam material)")
+        return {"pdf": pdf_name, "status": "skipped", "reason": "not BCBA material"}
+
     logger.info(f"Processing: {pdf_name}")
 
     # Reset per-PDF token counters
@@ -140,9 +166,6 @@ async def process_single_pdf(
     result = {
         "pdf": pdf_name,
         "pages": 0,
-        "chars_extracted": 0,
-        "chars_processed": 0,
-        "content_areas": [],
         "output_files": [],
         "input_tokens": 0,
         "output_tokens": 0,
@@ -150,79 +173,28 @@ async def process_single_pdf(
         "error": None,
     }
 
+    if dry_run:
+        # Just count pages for dry run
+        from pypdf import PdfReader
+
+        reader = PdfReader(pdf_path)
+        result["pages"] = len(reader.pages)
+        logger.info(f"  [DRY RUN] Would process {pdf_name} ({result['pages']} pages)")
+        logger.info(f"  [DRY RUN] Would write to: {output_path_rel}")
+        return result
+
     try:
-        # Step 1: Extract PDF
-        raw_json_path = raw_extraction_dir / f"{pdf_path.stem}.json"
+        # Process PDF using Claude's native PDF support
+        doc = await processor.process_pdf(pdf_path, verbose=verbose)
 
-        if skip_extraction and raw_json_path.exists():
-            logger.info(f"Loading existing extraction from {raw_json_path}")
-            pages = load_raw_extraction(raw_json_path)
-        else:
-            pages = extract_pdf(pdf_path)
-            save_raw_extraction(pages, raw_json_path)
+        result["pages"] = doc.page_count
 
-        result["pages"] = len(pages)
-
-        # Step 2: Convert to text
-        raw_text = pages_to_text(pages)
-        result["chars_extracted"] = len(raw_text)
-
-        if verbose:
-            logger.info(
-                f"  Extracted {len(pages)} pages, {len(raw_text)} chars, "
-                f"~{estimate_tokens(raw_text)} tokens"
-            )
-
-        if dry_run:
-            logger.info(f"  [DRY RUN] Would process {pdf_name}")
-            return result
-
-        if not raw_text.strip():
-            logger.warning(f"  No text extracted from {pdf_name}")
-            return result
-
-        # Step 3: Check if this is a known supplementary document
-        supp_path = get_document_output_path(pdf_name)
-
-        if supp_path:
-            # Process as supplementary document
-            logger.info(f"  Processing as supplementary: {supp_path}")
-
-            processed = await processor.process_chunks(raw_text, pdf_name)
-            result["chars_processed"] = len(processed)
-
-            output_path = output_dir / supp_path
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Append to existing file or create new
-            _append_to_file(output_path, processed, pdf_name)
-            result["output_files"].append(str(supp_path))
-
-        else:
-            # Process and classify by content area
-            logger.info(f"  Processing and classifying content...")
-
-            # Process in chunks
-            processed = await processor.process_chunks(raw_text, pdf_name)
-            result["chars_processed"] = len(processed)
-
-            # Classify the content
-            content_area = await processor.classify_content_area(processed)
-            result["content_areas"].append(content_area)
-
-            if verbose:
-                logger.info(f"  Classified as: {content_area}")
-
-            # Get output file path
-            area_mapping = get_content_area_file_mapping()
-            output_file = area_mapping.get(content_area)
-
-            if output_file:
-                output_path = output_dir / output_file
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-
-                _append_to_file(output_path, processed, pdf_name)
-                result["output_files"].append(output_file)
+        # Write to explicit output path
+        logger.info(f"  Writing to: {output_path_rel}")
+        output_path = output_dir / output_path_rel
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _append_to_file(output_path, doc.markdown, pdf_name)
+        result["output_files"].append(str(output_path_rel))
 
     except Exception as e:
         logger.error(f"Error processing {pdf_name}: {e}")
@@ -294,21 +266,17 @@ def generate_index(output_dir: Path) -> None:
     logger.info(f"Generated index: {index_path}")
 
 
-def print_summary(results: list[dict[str, Any]], processor: ContentProcessor) -> None:
+def print_summary(results: list[dict[str, Any]], processor: PDFProcessor) -> None:
     """Print processing summary."""
     print("\n" + "=" * 60)
     print("PREPROCESSING SUMMARY")
     print("=" * 60)
 
     total_pages = sum(r["pages"] for r in results)
-    total_chars = sum(r["chars_extracted"] for r in results)
-    total_processed = sum(r["chars_processed"] for r in results)
     errors = [r for r in results if r.get("error")]
 
     print(f"\nDocuments processed: {len(results)}")
     print(f"Total pages: {total_pages}")
-    print(f"Total characters extracted: {total_chars:,}")
-    print(f"Total characters processed: {total_processed:,}")
 
     tokens = processor.total_tokens
     print(f"\nAPI Usage:")
@@ -327,11 +295,11 @@ def print_summary(results: list[dict[str, Any]], processor: ContentProcessor) ->
                 f"{r['output_tokens']:,} out"
             )
 
-    # Estimate cost using Haiku pricing
-    input_cost = tokens["input"] / 1_000_000 * 1.00
-    output_cost = tokens["output"] / 1_000_000 * 5.00
+    # Estimate cost using Sonnet pricing
+    input_cost = tokens["input"] / 1_000_000 * 3.00
+    output_cost = tokens["output"] / 1_000_000 * 15.00
     total_cost = input_cost + output_cost
-    print(f"\nEstimated cost (Haiku 4.5): ${total_cost:.4f}")
+    print(f"\nEstimated cost (Sonnet): ${total_cost:.4f}")
     print(f"  Input: ${input_cost:.4f}")
     print(f"  Output: ${output_cost:.4f}")
 
@@ -347,10 +315,10 @@ async def main(
     input_dir: Path,
     output_dir: Path,
     single_file: Path | None = None,
-    skip_extraction: bool = False,
     dry_run: bool = False,
     verbose: bool = False,
     force: bool = False,
+    ask: bool = False,
 ) -> None:
     """Run the preprocessing pipeline."""
     # Load environment variables
@@ -367,21 +335,19 @@ async def main(
 
     # Setup directories
     ensure_output_dirs(output_dir)
-    raw_extraction_dir = input_dir.parent / "raw_extractions"
-    raw_extraction_dir.mkdir(parents=True, exist_ok=True)
 
     # Load manifest for resume support
     manifest = load_manifest(output_dir)
-    already_processed = len([k for k, v in manifest.get("processed", {}).items()
-                             if v.get("status") == "completed"])
+    already_processed = len(
+        [k for k, v in manifest.get("processed", {}).items() if v.get("status") == "completed"]
+    )
     if already_processed > 0:
         logger.info(f"Manifest loaded: {already_processed} PDFs already processed")
 
-    # Initialize processor
-    processor = ContentProcessor(
+    # Initialize processor with Claude's native PDF support
+    processor = PDFProcessor(
         api_key=api_key,
-        model=config.get("model", "claude-haiku-4-5-20250514"),
-        max_tokens_per_chunk=config.get("max_tokens_per_chunk", 4000),
+        model=config.get("model", "claude-sonnet-4-5"),
         delay_between_calls=config.get("delay_between_calls", 1.0),
     )
 
@@ -422,27 +388,47 @@ async def main(
     if dry_run:
         print("\n[DRY RUN MODE - No Claude API calls will be made]\n")
 
+    if ask:
+        print("\n[INTERACTIVE MODE - You will be prompted before each PDF]\n")
+
     # Process each PDF
     results = []
     rate_limit_stopped = False
+    process_all = False  # Set to True when user selects 'all remaining'
 
     try:
         for i, pdf in enumerate(pdfs, start=1):
-            print(f"\n[{i}/{len(pdfs)}] {pdf.name}")
+            # Interactive mode: prompt before processing
+            if ask and not process_all:
+                output_path = get_document_output_path(pdf.name)
+                response = prompt_for_pdf(pdf.name, output_path, i, len(pdfs))
+
+                if response == "q":
+                    print("\nQuitting. Progress saved.")
+                    break
+                elif response == "s":
+                    print("  Skipped by user")
+                    results.append({"pdf": pdf.name, "status": "skipped", "reason": "user skipped"})
+                    continue
+                elif response == "a":
+                    process_all = True
+                    print("  Processing all remaining PDFs...")
+                # response == "y" falls through to process
+
+            if not ask:
+                print(f"\n[{i}/{len(pdfs)}] {pdf.name}")
 
             result = await process_single_pdf(
                 pdf_path=pdf,
                 output_dir=output_dir,
                 processor=processor,
-                raw_extraction_dir=raw_extraction_dir,
-                skip_extraction=skip_extraction,
                 dry_run=dry_run,
                 verbose=verbose,
             )
             results.append(result)
 
             # Update manifest after each PDF (for resume support)
-            if not dry_run:
+            if not dry_run and result.get("status") != "skipped":
                 mark_pdf_processed(manifest, pdf, result)
                 save_manifest(output_dir, manifest)
 
@@ -455,7 +441,7 @@ async def main(
         print(f"\nProcessed {len(results)} PDFs before rate limit.")
         print(f"Remaining: {len(pdfs) - len(results)} PDFs")
         print("\nProgress saved. Resume with:")
-        print(f"  python -m src.preprocessing.run_preprocessing")
+        print("  python -m src.preprocessing.run_preprocessing")
         print("=" * 60)
 
         # Save manifest for any partial progress
@@ -476,12 +462,15 @@ async def main(
 def cli() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Preprocess BCBA study PDFs into structured markdown",
+        description="Preprocess BCBA study PDFs into structured markdown using Claude's native PDF support",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process all PDFs in data/raw/ (resumes from last run)
+  # Process PDFs interactively (prompts before each file)
   python -m src.preprocessing.run_preprocessing
+
+  # Process all without prompts
+  python -m src.preprocessing.run_preprocessing -y
 
   # Process a single file with verbose output
   python -m src.preprocessing.run_preprocessing -f data/raw/bacb/Ethics-Code.pdf -v
@@ -489,11 +478,8 @@ Examples:
   # Dry run to see what would be processed
   python -m src.preprocessing.run_preprocessing --dry-run
 
-  # Skip extraction if JSON files already exist
-  python -m src.preprocessing.run_preprocessing --skip-extraction
-
   # Force reprocess all PDFs (ignore manifest)
-  python -m src.preprocessing.run_preprocessing --force
+  python -m src.preprocessing.run_preprocessing --force -y
         """,
     )
 
@@ -522,12 +508,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--skip-extraction",
-        action="store_true",
-        help="Use existing JSON extractions (skip pdfplumber)",
-    )
-
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be processed without calling Claude API",
@@ -544,6 +524,13 @@ Examples:
         "--force",
         action="store_true",
         help="Reprocess all PDFs, ignoring manifest of already-processed files",
+    )
+
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip prompts and process all PDFs without asking",
     )
 
     args = parser.parse_args()
@@ -568,10 +555,10 @@ Examples:
             input_dir=args.input,
             output_dir=args.output,
             single_file=args.file,
-            skip_extraction=args.skip_extraction,
             dry_run=args.dry_run,
             verbose=args.verbose,
             force=args.force,
+            ask=not args.yes,
         )
     )
 

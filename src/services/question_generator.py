@@ -66,32 +66,43 @@ class QuestionGenerator:
     def _load_content_for_area(self, content_area: ContentArea) -> str:
         """Load pre-processed markdown content for a content area."""
         # Map content areas to file paths
+        # Core materials (task_list, handbook, tco) contain content spanning multiple areas
         area_files = {
             ContentArea.PHILOSOPHICAL_UNDERPINNINGS: [
-                "section_1_foundations/1.1_philosophical_underpinnings.md"
+                "core/task_list.md",
+                "core/handbook.md",
             ],
             ContentArea.CONCEPTS_AND_PRINCIPLES: [
-                "section_1_foundations/1.2_concepts_and_principles.md"
+                "core/task_list.md",
+                "reference/glossary.md",
             ],
-            ContentArea.MEASUREMENT: ["section_1_foundations/1.3_measurement.md"],
+            ContentArea.MEASUREMENT: [
+                "core/task_list.md",
+                "core/tco.md",
+            ],
             ContentArea.EXPERIMENTAL_DESIGN: [
-                "section_1_foundations/1.4_experimental_design.md"
+                "core/task_list.md",
+                "core/tco.md",
             ],
             ContentArea.ETHICS: [
-                "section_2_applications/2.1_ethics.md",
-                "supplementary/ethics_code.md",
+                "ethics/ethics_code.md",
+                "core/handbook.md",
             ],
             ContentArea.BEHAVIOR_ASSESSMENT: [
-                "section_2_applications/2.2_behavior_assessment.md"
+                "core/task_list.md",
+                "core/tco.md",
             ],
             ContentArea.BEHAVIOR_CHANGE_PROCEDURES: [
-                "section_2_applications/2.3_behavior_change_procedures.md"
+                "core/task_list.md",
+                "reference/glossary.md",
             ],
             ContentArea.INTERVENTIONS: [
-                "section_2_applications/2.4_interventions.md"
+                "core/task_list.md",
+                "core/tco.md",
             ],
             ContentArea.SUPERVISION: [
-                "section_2_applications/2.5_supervision.md"
+                "supervision/curriculum.md",
+                "core/handbook.md",
             ],
         }
 

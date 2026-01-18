@@ -2,43 +2,28 @@
 PDF preprocessing module for BCBA study materials.
 
 This module provides tools to:
-1. Extract text and tables from BCBA study PDFs
-2. Clean and structure content using Claude API
-3. Classify content into BCBA Task List content areas
-4. Output organized markdown files for question generation
+1. Process BCBA study PDFs using Claude's native PDF support
+2. Filter BCBA-relevant documents and skip non-relevant ones
+3. Output organized markdown files for question generation
 
 Usage:
     python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
 """
 
-from .pdf_extractor import (
-    extract_pdf,
-    extract_tables_as_markdown,
-    pages_to_text,
-    save_raw_extraction,
-    load_raw_extraction,
-)
-from .content_processor import (
-    ContentProcessor,
+from .pdf_processor import (
+    BCBA_DOCUMENTS,
+    SKIP_DOCUMENTS,
+    PDFProcessor,
+    ProcessedDocument,
     PersistentRateLimitError,
-    get_content_area_file_mapping,
     get_document_output_path,
-    merge_content_by_area,
-    estimate_tokens,
 )
 
 __all__ = [
-    # PDF extraction
-    "extract_pdf",
-    "extract_tables_as_markdown",
-    "pages_to_text",
-    "save_raw_extraction",
-    "load_raw_extraction",
-    # Content processing
-    "ContentProcessor",
+    "BCBA_DOCUMENTS",
+    "SKIP_DOCUMENTS",
+    "PDFProcessor",
+    "ProcessedDocument",
     "PersistentRateLimitError",
-    "get_content_area_file_mapping",
     "get_document_output_path",
-    "merge_content_by_area",
-    "estimate_tokens",
 ]
