@@ -4,7 +4,9 @@
     <td>
         {% set val = row[col] %}
         {% if loop.first %}
-        <a href="/tables/{{ table_name }}/{{ val }}">{{ (val | string)[:50] if val is not none else '-' }}{% if val is not none and (val | string) | length > 50 %}...{% endif %}</a>
+        <a href="/tables/{{ table_name }}/{{ val }}" class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
+            {{ (val | string)[:50] if val is not none else '-' }}{% if val is not none and (val | string) | length > 50 %}...{% endif %}
+        </a>
         {% else %}
         {{ (val | string)[:50] if val is not none else '-' }}{% if val is not none and (val | string) | length > 50 %}...{% endif %}
         {% endif %}
@@ -13,12 +15,12 @@
 </tr>
 {% else %}
 <tr>
-    <td colspan="{{ columns | length }}">No records found</td>
+    <td colspan="{{ columns | length }}" class="text-center text-text-muted py-8">No records found</td>
 </tr>
 {% endfor %}
 
 <tr id="pagination-row">
-    <td colspan="{{ columns | length }}">
+    <td colspan="{{ columns | length }}" class="border-b-0">
         {% include "partials/pagination.html" %}
     </td>
 </tr>

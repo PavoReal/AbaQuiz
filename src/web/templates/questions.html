@@ -1,23 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Questions - AbaQuiz Admin{% endblock %}
 {% block content %}
-<nav aria-label="breadcrumb">
-    <ul>
-        <li><a href="/">Home</a></li>
-        <li>Questions</li>
-    </ul>
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-4">
+    <ol class="flex items-center gap-2 text-sm">
+        <li><a href="/" class="text-text-muted hover:text-text-primary transition-colors">Home</a></li>
+        <li class="text-text-disabled">/</li>
+        <li class="text-text-primary font-medium">Questions</li>
+    </ol>
 </nav>
 
-<h1>Questions</h1>
-<p>{{ total }} questions in pool</p>
+<div class="flex items-baseline gap-4 mb-6">
+    <h1 class="text-2xl font-semibold tracking-tight text-text-primary">Questions</h1>
+    <span class="text-sm text-text-muted">{{ total }} questions in pool</span>
+</div>
 
-<div class="filters-bar" x-data="{
+<!-- Filters -->
+<div class="mb-6" x-data="{
     search: '{{ search }}',
     content_area: '{{ content_area }}',
     difficulty: '{{ difficulty }}'
 }">
-    <div class="filter-row">
+    <div class="flex flex-wrap gap-3 items-center">
         <select name="content_area"
+                class="select min-w-[200px]"
                 x-model="content_area"
                 hx-get="/questions/cards"
                 hx-trigger="change"
@@ -30,6 +36,7 @@
         </select>
 
         <select name="difficulty"
+                class="select min-w-[160px]"
                 x-model="difficulty"
                 hx-get="/questions/cards"
                 hx-trigger="change"
@@ -43,6 +50,7 @@
 
         <input type="search"
                name="search"
+               class="input flex-1 min-w-[200px]"
                placeholder="Search questions..."
                x-model="search"
                hx-get="/questions/cards"
@@ -53,6 +61,7 @@
     </div>
 </div>
 
+<!-- Questions List -->
 <div id="questions-content">
     {% include "partials/question_cards.html" %}
 </div>

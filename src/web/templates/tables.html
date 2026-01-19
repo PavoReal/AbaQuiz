@@ -1,24 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Tables - AbaQuiz Admin{% endblock %}
 {% block content %}
-<h1>Database Tables</h1>
+<h1 class="text-2xl font-semibold tracking-tight text-text-primary mb-6">Database Tables</h1>
 
-<table>
-    <thead>
-        <tr>
-            <th>Table Name</th>
-            <th>Row Count</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for table in tables %}
-        <tr>
-            <td><a href="/tables/{{ table.name }}">{{ table.name }}</a></td>
-            <td>{{ table.count }}</td>
-            <td><a href="/tables/{{ table.name }}" role="button" class="outline">Browse</a></td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="overflow-x-auto border border-border-default rounded-lg">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Table Name</th>
+                <th>Row Count</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for table in tables %}
+            <tr>
+                <td>
+                    <a href="/tables/{{ table.name }}" class="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
+                        {{ table.name }}
+                    </a>
+                </td>
+                <td class="font-mono text-text-secondary">{{ table.count }}</td>
+                <td>
+                    <a href="/tables/{{ table.name }}" class="btn-secondary-sm">Browse</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}

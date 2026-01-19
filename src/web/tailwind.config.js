@@ -1,0 +1,87 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./templates/**/*.html'],
+  darkMode: ['class', '[data-theme="dark"]'],
+  theme: {
+    extend: {
+      colors: {
+        // Primary Teal/Cyan
+        primary: {
+          50: '#ecfeff',
+          100: '#cffafe',
+          200: '#a5f3fc',
+          300: '#67e8f9',
+          400: '#22d3ee',
+          500: '#06b6d4',
+          600: '#0891b2',
+          700: '#0e7490',
+          800: '#155e75',
+          900: '#164e63',
+        },
+        // Semantic colors mapped to CSS variables
+        'bg-base': 'var(--color-bg-base)',
+        'bg-subtle': 'var(--color-bg-subtle)',
+        'bg-muted': 'var(--color-bg-muted)',
+        'bg-emphasis': 'var(--color-bg-emphasis)',
+        'surface-primary': 'var(--color-surface-primary)',
+        'surface-secondary': 'var(--color-surface-secondary)',
+        'surface-elevated': 'var(--color-surface-elevated)',
+        'border-default': 'var(--color-border-default)',
+        'border-muted': 'var(--color-border-muted)',
+        'border-emphasis': 'var(--color-border-emphasis)',
+        'text-primary': 'var(--color-text-primary)',
+        'text-secondary': 'var(--color-text-secondary)',
+        'text-muted': 'var(--color-text-muted)',
+        'text-disabled': 'var(--color-text-disabled)',
+        'text-inverse': 'var(--color-text-inverse)',
+        'hover-overlay': 'var(--color-hover-overlay)',
+        'active-overlay': 'var(--color-active-overlay)',
+        // Semantic status colors
+        'success': 'var(--color-success)',
+        'success-subtle': 'var(--color-success-subtle)',
+        'success-border': 'var(--color-success-border)',
+        'warning': 'var(--color-warning)',
+        'warning-subtle': 'var(--color-warning-subtle)',
+        'warning-border': 'var(--color-warning-border)',
+        'error': 'var(--color-error)',
+        'error-subtle': 'var(--color-error-subtle)',
+        'error-border': 'var(--color-error-border)',
+        'info': 'var(--color-info)',
+        'info-subtle': 'var(--color-info-subtle)',
+        'info-border': 'var(--color-info-border)',
+        'neutral': 'var(--color-neutral)',
+        'neutral-subtle': 'var(--color-neutral-subtle)',
+        'neutral-border': 'var(--color-neutral-border)',
+        // Sidebar colors
+        'sidebar-bg': 'var(--sidebar-bg)',
+        'sidebar-border': 'var(--sidebar-border)',
+        'sidebar-item-hover': 'var(--sidebar-item-hover)',
+        'sidebar-item-active': 'var(--sidebar-item-active)',
+        'sidebar-item-active-border': 'var(--sidebar-item-active-border)',
+      },
+      boxShadow: {
+        'sm': 'var(--shadow-sm)',
+        'md': 'var(--shadow-md)',
+        'lg': 'var(--shadow-lg)',
+        'xl': 'var(--shadow-xl)',
+      },
+      fontFamily: {
+        sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', '"SF Mono"', 'Menlo', 'Consolas', '"Liberation Mono"', 'monospace'],
+      },
+      spacing: {
+        'sidebar-expanded': '240px',
+        'sidebar-collapsed': '64px',
+      },
+      maxWidth: {
+        'content': '1400px',
+      },
+      transitionDuration: {
+        'fast': '150ms',
+        'normal': '200ms',
+        'slow': '300ms',
+      },
+    },
+  },
+  plugins: [],
+}

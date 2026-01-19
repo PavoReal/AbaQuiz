@@ -1,0 +1,559 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   CSS Custom Properties - Theme Variables
+   ============================================ */
+
+:root {
+  /* ============================================
+     LIGHT THEME (Default)
+     ============================================ */
+
+  /* Background Layers */
+  --color-bg-base: #ffffff;
+  --color-bg-subtle: #f8fafa;
+  --color-bg-muted: #f1f5f5;
+  --color-bg-emphasis: #e8eeee;
+
+  /* Surface (Cards, Modals, Dropdowns) */
+  --color-surface-primary: #ffffff;
+  --color-surface-secondary: #f8fafa;
+  --color-surface-elevated: #ffffff;
+
+  /* Border */
+  --color-border-default: #e2e8e8;
+  --color-border-muted: #eef2f2;
+  --color-border-emphasis: #cbd5d5;
+
+  /* Text */
+  --color-text-primary: #1a2626;
+  --color-text-secondary: #4a5858;
+  --color-text-muted: #6b7a7a;
+  --color-text-disabled: #9ca8a8;
+  --color-text-inverse: #ffffff;
+
+  /* Primary (Teal/Cyan) */
+  --color-primary: #0891b2;
+  --color-primary-hover: #0e7490;
+  --color-primary-active: #155e75;
+  --color-primary-subtle: #ecfeff;
+  --color-primary-muted: #cffafe;
+
+  /* Success (Green) */
+  --color-success: #059669;
+  --color-success-subtle: #ecfdf5;
+  --color-success-border: #a7f3d0;
+
+  /* Warning (Amber) */
+  --color-warning: #d97706;
+  --color-warning-subtle: #fffbeb;
+  --color-warning-border: #fde68a;
+
+  /* Error (Red) */
+  --color-error: #dc2626;
+  --color-error-subtle: #fef2f2;
+  --color-error-border: #fecaca;
+
+  /* Info (Blue) */
+  --color-info: #2563eb;
+  --color-info-subtle: #eff6ff;
+  --color-info-border: #bfdbfe;
+
+  /* Neutral (For badges) */
+  --color-neutral: #6b7a7a;
+  --color-neutral-subtle: #f1f5f5;
+  --color-neutral-border: #e2e8e8;
+
+  /* Interactive States */
+  --color-focus-ring: rgba(8, 145, 178, 0.4);
+  --color-hover-overlay: rgba(0, 0, 0, 0.04);
+  --color-active-overlay: rgba(0, 0, 0, 0.08);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03);
+
+  /* Sidebar */
+  --sidebar-width-expanded: 240px;
+  --sidebar-width-collapsed: 64px;
+  --sidebar-bg: #f8fafa;
+  --sidebar-border: #e2e8e8;
+  --sidebar-item-hover: #e8eeee;
+  --sidebar-item-active: #e8eeee;
+  --sidebar-item-active-border: #0891b2;
+
+  /* Layout */
+  --content-padding: 24px;
+  --content-max-width: 1400px;
+  --card-border-radius: 8px;
+  --input-border-radius: 6px;
+  --btn-border-radius: 6px;
+}
+
+[data-theme="dark"] {
+  /* ============================================
+     DARK THEME
+     ============================================ */
+
+  /* Background Layers */
+  --color-bg-base: #0f1414;
+  --color-bg-subtle: #161c1c;
+  --color-bg-muted: #1e2626;
+  --color-bg-emphasis: #283030;
+
+  /* Surface (Cards, Modals, Dropdowns) */
+  --color-surface-primary: #161c1c;
+  --color-surface-secondary: #1e2626;
+  --color-surface-elevated: #1e2626;
+
+  /* Border */
+  --color-border-default: #2d3838;
+  --color-border-muted: #242e2e;
+  --color-border-emphasis: #3d4a4a;
+
+  /* Text */
+  --color-text-primary: #f0f4f4;
+  --color-text-secondary: #a8b8b8;
+  --color-text-muted: #7a8a8a;
+  --color-text-disabled: #4a5858;
+  --color-text-inverse: #0f1414;
+
+  /* Primary (Teal/Cyan - brighter for dark mode) */
+  --color-primary: #22d3ee;
+  --color-primary-hover: #67e8f9;
+  --color-primary-active: #a5f3fc;
+  --color-primary-subtle: #164e63;
+  --color-primary-muted: #155e75;
+
+  /* Success (Green) */
+  --color-success: #34d399;
+  --color-success-subtle: #064e3b;
+  --color-success-border: #065f46;
+
+  /* Warning (Amber) */
+  --color-warning: #fbbf24;
+  --color-warning-subtle: #78350f;
+  --color-warning-border: #92400e;
+
+  /* Error (Red) */
+  --color-error: #f87171;
+  --color-error-subtle: #7f1d1d;
+  --color-error-border: #991b1b;
+
+  /* Info (Blue) */
+  --color-info: #60a5fa;
+  --color-info-subtle: #1e3a5f;
+  --color-info-border: #1e40af;
+
+  /* Neutral (For badges) */
+  --color-neutral: #a8b8b8;
+  --color-neutral-subtle: #1e2626;
+  --color-neutral-border: #2d3838;
+
+  /* Interactive States */
+  --color-focus-ring: rgba(34, 211, 238, 0.4);
+  --color-hover-overlay: rgba(255, 255, 255, 0.04);
+  --color-active-overlay: rgba(255, 255, 255, 0.08);
+
+  /* Shadows (more subtle in dark mode) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+
+  /* Sidebar */
+  --sidebar-bg: #161c1c;
+  --sidebar-border: #2d3838;
+  --sidebar-item-hover: #1e2626;
+  --sidebar-item-active: #1e2626;
+  --sidebar-item-active-border: #22d3ee;
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--color-bg-base);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+}
+
+/* ============================================
+   Component Classes
+   ============================================ */
+
+@layer components {
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-md border cursor-pointer transition-all duration-150 whitespace-nowrap;
+  }
+
+  .btn:focus-visible {
+    @apply outline-none;
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
+  }
+
+  .btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn;
+    background-color: var(--color-primary);
+    color: var(--color-text-inverse);
+    border-color: var(--color-primary);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-primary-hover);
+    border-color: var(--color-primary-hover);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    background-color: var(--color-primary-active);
+    border-color: var(--color-primary-active);
+  }
+
+  .btn-secondary {
+    @apply btn;
+    background-color: transparent;
+    color: var(--color-text-primary);
+    border-color: var(--color-border-default);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-hover-overlay);
+    border-color: var(--color-border-emphasis);
+  }
+
+  .btn-ghost {
+    @apply btn;
+    background-color: transparent;
+    color: var(--color-text-secondary);
+    border-color: transparent;
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--color-hover-overlay);
+    color: var(--color-text-primary);
+  }
+
+  .btn-danger {
+    @apply btn;
+    background-color: var(--color-error);
+    color: white;
+    border-color: var(--color-error);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background-color: #b91c1c;
+    border-color: #b91c1c;
+  }
+
+  /* Small button variants */
+  .btn-sm {
+    @apply px-3 py-1.5 text-[13px];
+  }
+
+  .btn-primary-sm {
+    @apply btn-primary btn-sm;
+  }
+
+  .btn-secondary-sm {
+    @apply btn-secondary btn-sm;
+  }
+
+  .btn-ghost-sm {
+    @apply btn-ghost btn-sm;
+  }
+
+  /* Form Inputs */
+  .input {
+    @apply w-full px-3 py-2.5 text-sm rounded-md border transition-all duration-150;
+    color: var(--color-text-primary);
+    background-color: var(--color-bg-base);
+    border-color: var(--color-border-default);
+  }
+
+  .input::placeholder {
+    color: var(--color-text-disabled);
+  }
+
+  .input:hover:not(:disabled) {
+    border-color: var(--color-border-emphasis);
+  }
+
+  .input:focus {
+    @apply outline-none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
+  }
+
+  .input:disabled {
+    @apply opacity-70 cursor-not-allowed;
+    background-color: var(--color-bg-muted);
+  }
+
+  .select {
+    @apply input appearance-none pr-10;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236b7a7a'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded text-xs font-medium;
+    background-color: var(--color-neutral-subtle);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-neutral-border);
+  }
+
+  /* Card */
+  .card {
+    @apply rounded-lg border;
+    background-color: var(--color-surface-primary);
+    border-color: var(--color-border-default);
+  }
+
+  .card:hover {
+    border-color: var(--color-border-emphasis);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Sidebar navigation item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 mx-2 rounded-md text-sm font-medium transition-all duration-150;
+    color: var(--color-text-secondary);
+  }
+
+  .nav-item:hover {
+    background-color: var(--sidebar-item-hover);
+    color: var(--color-text-primary);
+  }
+
+  .nav-item.active {
+    background-color: var(--sidebar-item-active);
+    color: var(--color-primary);
+    border-left: 2px solid var(--sidebar-item-active-border);
+    margin-left: 6px;
+    padding-left: 10px;
+  }
+
+  .nav-item svg {
+    @apply w-5 h-5 flex-shrink-0;
+  }
+
+  /* Data Table */
+  .data-table {
+    @apply w-full text-sm;
+    border-collapse: collapse;
+  }
+
+  .data-table thead {
+    @apply sticky top-0 z-10;
+    background-color: var(--color-bg-subtle);
+  }
+
+  .data-table th {
+    @apply px-3 py-3 text-left font-medium whitespace-nowrap;
+    color: var(--color-text-secondary);
+    border-bottom: 1px solid var(--color-border-default);
+  }
+
+  .data-table th a {
+    @apply inline-flex items-center gap-1;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .data-table th a:hover {
+    color: var(--color-text-primary);
+  }
+
+  .data-table td {
+    @apply px-3 py-2.5 max-w-xs truncate;
+    color: var(--color-text-primary);
+    border-bottom: 1px solid var(--color-border-muted);
+  }
+
+  .data-table tbody tr:hover {
+    background-color: var(--color-hover-overlay);
+  }
+
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* Question Card */
+  .question-card {
+    @apply card mb-4 transition-all duration-200;
+  }
+
+  .question-card-header {
+    @apply flex items-center gap-3 px-5 py-4 flex-wrap;
+    border-bottom: 1px solid var(--color-border-muted);
+  }
+
+  .question-id {
+    @apply text-xs font-semibold font-mono;
+    color: var(--color-text-muted);
+  }
+
+  .difficulty-stars {
+    @apply text-sm tracking-widest;
+    color: var(--color-warning);
+  }
+
+  .question-date {
+    @apply ml-auto text-xs;
+    color: var(--color-text-muted);
+  }
+
+  .question-card-body {
+    @apply p-5;
+  }
+
+  .question-text {
+    @apply text-[15px] leading-relaxed mb-4;
+    color: var(--color-text-primary);
+  }
+
+  .options-grid {
+    @apply grid grid-cols-1 sm:grid-cols-2 gap-2.5;
+  }
+
+  .option {
+    @apply flex gap-2.5 p-3 rounded-md text-sm;
+    background-color: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-muted);
+  }
+
+  .option.correct {
+    background-color: var(--color-success-subtle);
+    border-color: var(--color-success-border);
+    border-left-width: 3px;
+    border-left-color: var(--color-success);
+  }
+
+  .option-key {
+    @apply font-semibold w-6 flex-shrink-0;
+    color: var(--color-text-muted);
+  }
+
+  .option-text {
+    color: var(--color-text-primary);
+  }
+
+  .question-card-footer {
+    @apply flex gap-2.5 px-5 py-4;
+    border-top: 1px solid var(--color-border-muted);
+  }
+
+  .question-explanation {
+    @apply px-5 pb-5 -mt-1;
+  }
+
+  .question-explanation blockquote {
+    @apply m-0 p-4 rounded-r-md text-sm leading-relaxed;
+    background-color: var(--color-bg-subtle);
+    border-left: 3px solid var(--color-primary);
+    color: var(--color-text-secondary);
+  }
+
+  /* Stat Card */
+  .stat-card {
+    @apply card p-5 flex items-start gap-4;
+  }
+
+  .stat-card-icon {
+    @apply w-10 h-10 rounded-lg flex items-center justify-center;
+    background-color: var(--color-primary-subtle);
+    color: var(--color-primary);
+  }
+
+  .stat-card-value {
+    @apply text-3xl font-bold tracking-tight;
+    color: var(--color-text-primary);
+  }
+
+  .stat-card-label {
+    @apply text-sm mt-0.5;
+    color: var(--color-text-muted);
+  }
+
+  .stat-card-change {
+    @apply text-xs mt-2;
+  }
+
+  .stat-card-change.positive {
+    color: var(--color-success);
+  }
+
+  .stat-card-change.negative {
+    color: var(--color-error);
+  }
+
+  /* Pagination */
+  .pagination {
+    @apply flex justify-center items-center gap-4 mt-6 pt-4;
+    border-top: 1px solid var(--color-border-muted);
+  }
+
+  .pagination-info {
+    color: var(--color-text-muted);
+  }
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+
+@layer utilities {
+  /* Focus ring utility */
+  .focus-ring {
+    @apply outline-none;
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
+  }
+
+  /* Scrollbar styling for webkit */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background-color: var(--color-bg-subtle);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-emphasis);
+    border-radius: 4px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-text-muted);
+  }
+}
+
+/* ============================================
+   Reduced Motion
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

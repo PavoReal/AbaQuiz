@@ -1,7 +1,7 @@
 """
 Web server for AbaQuiz Admin GUI.
 
-Uses aiohttp with Jinja2 templating, HTMX, Alpine.js, and Pico CSS.
+Uses aiohttp with Jinja2 templating, HTMX, Alpine.js, and Tailwind CSS.
 """
 
 from pathlib import Path
@@ -14,14 +14,20 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+async def request_processor(request: web.Request) -> dict:
+    """Context processor to add request to all templates."""
+    return {"request": request}
+
+
 def create_app() -> web.Application:
     """Create and configure the web application."""
     app = web.Application()
 
-    # Setup Jinja2 templating
+    # Setup Jinja2 templating with request context processor
     aiohttp_jinja2.setup(
         app,
         loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
+        context_processors=[request_processor],
     )
 
     # Setup routes

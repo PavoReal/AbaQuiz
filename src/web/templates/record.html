@@ -1,44 +1,62 @@
 {% extends "base.html" %}
 {% block title %}Record {{ record_id }} - {{ table_name }} - AbaQuiz Admin{% endblock %}
 {% block content %}
-<nav aria-label="breadcrumb">
-    <ul>
-        <li><a href="/">Home</a></li>
-        <li><a href="/tables">Tables</a></li>
-        <li><a href="/tables/{{ table_name }}">{{ table_name }}</a></li>
-        <li>Record {{ record_id }}</li>
-    </ul>
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-4">
+    <ol class="flex items-center gap-2 text-sm">
+        <li><a href="/" class="text-text-muted hover:text-text-primary transition-colors">Home</a></li>
+        <li class="text-text-disabled">/</li>
+        <li><a href="/tables" class="text-text-muted hover:text-text-primary transition-colors">Tables</a></li>
+        <li class="text-text-disabled">/</li>
+        <li><a href="/tables/{{ table_name }}" class="text-text-muted hover:text-text-primary transition-colors">{{ table_name }}</a></li>
+        <li class="text-text-disabled">/</li>
+        <li class="text-text-primary font-medium">Record {{ record_id }}</li>
+    </ol>
 </nav>
 
-<h1>{{ table_name }} #{{ record_id }}</h1>
+<h1 class="text-2xl font-semibold tracking-tight text-text-primary mb-6">{{ table_name }} #{{ record_id }}</h1>
 
-<article>
-    <table>
-        <tbody>
-            {% for col in schema %}
-            <tr>
-                <th scope="row">
-                    {{ col.name }}
-                    {% if col.pk %}<mark>PK</mark>{% endif %}
-                </th>
-                <td>
-                    {% set val = record[col.name] %}
-                    {% if val is none %}
-                    <em class="secondary">NULL</em>
-                    {% elif val | string | length > 500 %}
-                    <details>
-                        <summary>{{ val | string | truncate(100) }}</summary>
-                        <pre>{{ val }}</pre>
-                    </details>
-                    {% else %}
-                    <pre style="white-space: pre-wrap; margin: 0;">{{ val }}</pre>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</article>
+<div class="card mb-6">
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <tbody>
+                {% for col in schema %}
+                <tr class="border-b border-border-muted last:border-b-0">
+                    <th scope="row" class="px-4 py-3 text-left font-medium text-text-secondary bg-bg-subtle w-48 align-top">
+                        <div class="flex items-center gap-2">
+                            {{ col.name }}
+                            {% if col.pk %}
+                            <span class="badge text-[10px] px-1.5 py-0.5">PK</span>
+                            {% endif %}
+                        </div>
+                    </th>
+                    <td class="px-4 py-3 text-text-primary">
+                        {% set val = record[col.name] %}
+                        {% if val is none %}
+                        <span class="text-text-disabled italic">NULL</span>
+                        {% elif val | string | length > 500 %}
+                        <details class="group" x-data="{ open: false }">
+                            <summary class="cursor-pointer text-primary-600 hover:text-primary-700 select-none" @click="open = !open">
+                                <span class="text-text-primary">{{ val | string | truncate(100) }}</span>
+                                <span class="text-xs ml-2" x-text="open ? 'collapse' : 'expand'">expand</span>
+                            </summary>
+                            <pre class="mt-2 p-3 bg-bg-muted rounded-md text-xs font-mono whitespace-pre-wrap overflow-x-auto">{{ val }}</pre>
+                        </details>
+                        {% else %}
+                        <pre class="font-mono text-sm whitespace-pre-wrap m-0 p-0 bg-transparent">{{ val }}</pre>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
 
-<a href="/tables/{{ table_name }}" role="button" class="secondary">&larr; Back to {{ table_name }}</a>
+<a href="/tables/{{ table_name }}" class="btn-secondary">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+    </svg>
+    Back to {{ table_name }}
+</a>
 {% endblock %}

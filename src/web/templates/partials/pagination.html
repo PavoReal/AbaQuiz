@@ -1,29 +1,41 @@
-<nav aria-label="Pagination">
-    <ul>
-        {% if page > 1 %}
-        <li>
-            <a href="?page={{ page - 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
-               hx-get="/tables/{{ table_name }}/rows?page={{ page - 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
-               hx-target="#table-content">
-                &laquo; Previous
-            </a>
-        </li>
-        {% else %}
-        <li><span class="secondary">&laquo; Previous</span></li>
-        {% endif %}
+<nav aria-label="Pagination" class="flex justify-center items-center gap-4 py-3">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+       hx-get="/tables/{{ table_name }}/rows?page={{ page - 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+       hx-target="#table-content"
+       class="btn-ghost-sm">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+        Previous
+    </a>
+    {% else %}
+    <span class="btn-ghost-sm opacity-50 cursor-not-allowed">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+        Previous
+    </span>
+    {% endif %}
 
-        <li><span>Page {{ page }} of {{ pages }}</span></li>
+    <span class="text-sm text-text-muted">Page {{ page }} of {{ pages }}</span>
 
-        {% if page < pages %}
-        <li>
-            <a href="?page={{ page + 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
-               hx-get="/tables/{{ table_name }}/rows?page={{ page + 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
-               hx-target="#table-content">
-                Next &raquo;
-            </a>
-        </li>
-        {% else %}
-        <li><span class="secondary">Next &raquo;</span></li>
-        {% endif %}
-    </ul>
+    {% if page < pages %}
+    <a href="?page={{ page + 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+       hx-get="/tables/{{ table_name }}/rows?page={{ page + 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+       hx-target="#table-content"
+       class="btn-ghost-sm">
+        Next
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+    </a>
+    {% else %}
+    <span class="btn-ghost-sm opacity-50 cursor-not-allowed">
+        Next
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+    </span>
+    {% endif %}
 </nav>
