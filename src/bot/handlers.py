@@ -839,3 +839,55 @@ async def noop_callback(
     """Handle noop callbacks (section headers)."""
     if update.callback_query:
         await update.callback_query.answer()
+
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+async def health_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /health command - check system health including content files."""
+    if not update.effective_user or not update.message:
+        return
+
+    from src.services.content_validator import get_content_health
+
+    log_user_action(logger, update.effective_user.id, "/health")
+
+    health = get_content_health()
+
+    if health["status"] == "healthy":
+        await update.message.reply_text(
+            f"✅ *System Healthy*\n\n"
+            f"📚 All {health['total_areas']} content areas available\n"
+            f"📁 Content dir: `{health['content_dir']}`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    elif health["status"] == "degraded":
+        missing_summary = "\n".join(
+            f"  • {area}: {len(files)} files missing"
+            for area, files in health["missing_files"].items()
+        )
+        await update.message.reply_text(
+            f"⚠️ *System Degraded*\n\n"
+            f"📚 {health['valid_areas']}/{health['total_areas']} content areas available\n\n"
+            f"*Missing files:*\n{missing_summary}\n\n"
+            f"Run preprocessing to fix:\n"
+            f"`python -m src.preprocessing.run_preprocessing`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ *System Error*\n\n"
+            f"{health.get('message', 'Unknown error')}\n\n"
+            f"Run preprocessing to initialize:\n"
+            f"`python -m src.preprocessing.run_preprocessing`",
+            parse_mode=ParseMode.MARKDOWN,
+        )

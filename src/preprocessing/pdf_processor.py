@@ -48,6 +48,7 @@ BCBA_DOCUMENTS: dict[str, str] = {
     "BCBA-Task-List-5th-Edition.pdf": "core/task_list.md",
     "BCBA-Handbook.pdf": "core/handbook.md",
     "BCBA-TCO-6th-Edition.pdf": "core/tco.md",
+    "BCBA-6th-Edition-Test-Content-Outline-240903-a.pdf": "core/tco.md",  # Updated TCO
     # Ethics
     "Ethics-Code-for-Behavior-Analysts.pdf": "ethics/ethics_code.md",
     # Supervision

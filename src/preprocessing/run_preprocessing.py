@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -66,9 +67,42 @@ def prompt_for_pdf(pdf_name: str, output_path: str | None, index: int, total: in
             print("  Invalid input. Enter y, s, a, or q.")
 
 
+def validate_manifest(manifest_path: Path) -> bool:
+    """Validate manifest file is readable and properly formatted.
+
+    Returns:
+        True if manifest is valid or doesn't exist, False if corrupt (backed up).
+    """
+    if not manifest_path.exists():
+        return True  # No manifest = fresh start
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        # Check required fields
+        if not isinstance(manifest.get("processed"), dict):
+            logger.error("Invalid manifest: missing 'processed' dict")
+            return False
+
+        return True
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Corrupt manifest file: {e}")
+        # Backup and recreate
+        backup = manifest_path.with_suffix(".json.bak")
+        manifest_path.rename(backup)
+        logger.info(f"Backed up corrupt manifest to {backup}")
+        return True  # Will recreate fresh
+
+
 def load_manifest(output_dir: Path) -> dict[str, Any]:
     """Load the preprocessing manifest tracking processed PDFs."""
     manifest_path = output_dir / MANIFEST_FILENAME
+
+    # Validate before loading
+    validate_manifest(manifest_path)
+
     if manifest_path.exists():
         with open(manifest_path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -189,12 +223,16 @@ async def process_single_pdf(
 
         result["pages"] = doc.page_count
 
-        # Write to explicit output path
+        # Write to explicit output path (with deduplication)
         logger.info(f"  Writing to: {output_path_rel}")
         output_path = output_dir / output_path_rel
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        _append_to_file(output_path, doc.markdown, pdf_name)
-        result["output_files"].append(str(output_path_rel))
+        was_added = _append_to_file(output_path, doc.markdown, pdf_name)
+        if was_added:
+            result["output_files"].append(str(output_path_rel))
+        else:
+            result["status"] = "skipped"
+            result["reason"] = "duplicate content"
 
     except Exception as e:
         logger.error(f"Error processing {pdf_name}: {e}")
@@ -218,9 +256,28 @@ async def process_single_pdf(
     return result
 
 
-def _append_to_file(path: Path, content: str, source: str) -> None:
-    """Append content to a file with source header."""
-    header = f"\n\n---\n\n## Source: {source}\n\n"
+def get_content_hash(content: str) -> str:
+    """Generate hash of content for deduplication."""
+    return hashlib.md5(content.encode()).hexdigest()[:12]
+
+
+def _append_to_file(path: Path, content: str, source: str) -> bool:
+    """Append content to a file with source header and deduplication.
+
+    Returns:
+        True if content was added, False if duplicate was skipped.
+    """
+    content_hash = get_content_hash(content)
+    hash_marker = f"<!-- hash:{content_hash} -->"
+
+    # Check for duplicate content
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if hash_marker in existing:
+            logger.info(f"Skipping duplicate content from {source} (hash: {content_hash})")
+            return False
+
+    header = f"\n\n---\n\n{hash_marker}\n## Source: {source}\n\n"
 
     mode = "a" if path.exists() else "w"
     with open(path, mode, encoding="utf-8") as f:
@@ -231,6 +288,8 @@ def _append_to_file(path: Path, content: str, source: str) -> None:
             f.write(f"*Generated: {datetime.now().isoformat()}*\n")
             f.write(header)
         f.write(content)
+
+    return True
 
 
 def generate_index(output_dir: Path) -> None:

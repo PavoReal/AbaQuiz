@@ -15,6 +15,7 @@ import signal
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
 from src.database.migrations import initialize_database
+from src.services.content_validator import validate_content_on_startup
 
 logger = get_logger(__name__)
 
@@ -156,6 +157,9 @@ async def run_web_only() -> None:
     await initialize_database(settings.database_path)
     logger.info("Database initialized")
 
+    # Validate content files (warn on missing, don't fail)
+    validate_content_on_startup(strict=False)
+
     # Create and start web server
     web_app = create_app()
     runner = web.AppRunner(web_app)
@@ -197,6 +201,7 @@ def register_handlers(application) -> None:
         answer_callback,
         areas_command,
         focus_callback,
+        health_command,
         help_command,
         noop_callback,
         quiz_area_callback,
@@ -219,6 +224,7 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("settings", settings_command))
+    application.add_handler(CommandHandler("health", health_command))
 
     # Admin command handlers
     application.add_handler(CommandHandler("admin", admin_command))
@@ -266,6 +272,9 @@ async def run_bot() -> None:
     # Initialize database
     await initialize_database(settings.database_path)
     logger.info("Database initialized")
+
+    # Validate content files (warn on missing, don't fail)
+    validate_content_on_startup(strict=False)
 
     # Build application
     application = (
