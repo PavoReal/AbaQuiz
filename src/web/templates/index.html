@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - AbaQuiz Admin{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="grid">
+    <article>
+        <header>Tables</header>
+        <p><strong>{{ total_tables }}</strong></p>
+    </article>
+    <article>
+        <header>Total Rows</header>
+        <p><strong>{{ total_rows }}</strong></p>
+    </article>
+</div>
+
+<h2>Tables Overview</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Table Name</th>
+            <th>Row Count</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for table in tables %}
+        <tr>
+            <td><a href="/tables/{{ table.name }}">{{ table.name }}</a></td>
+            <td>{{ table.count }}</td>
+            <td><a href="/tables/{{ table.name }}" role="button" class="outline">Browse</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

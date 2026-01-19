@@ -12,11 +12,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram.ext import Application
 
-from src.config.constants import ContentArea
 from src.config.logging import get_logger
 from src.config.settings import get_settings
 from src.database.repository import get_repository
-from src.services.question_generator import get_question_generator
+from src.services.pool_manager import get_pool_manager
 
 if TYPE_CHECKING:
     pass
@@ -146,53 +145,40 @@ async def notify_admins_of_failure(
                 logger.error(f"Failed to notify admin {admin_id}: {e}")
 
 
-async def maintain_question_pool() -> None:
+async def check_question_pool() -> None:
     """
     Check question pool levels and generate questions if needed.
 
-    Runs daily to ensure adequate questions in each content area.
+    Uses active-user-based threshold: generates when avg unseen
+    questions per active user falls below the configured threshold.
+
+    Runs daily to ensure adequate questions for active users.
     """
-    settings = get_settings()
-    repo = await get_repository(settings.database_path)
-    generator = get_question_generator()
+    logger.info("Starting question pool check")
 
-    logger.info("Starting question pool maintenance")
+    try:
+        pool_manager = get_pool_manager()
+        result = await pool_manager.check_and_replenish_pool()
 
-    # Get current pool counts
-    pool_counts = await repo.get_question_pool_counts()
-
-    for area in ContentArea:
-        current_count = pool_counts.get(area.value, 0)
-
-        if current_count < settings.pool_threshold_per_area:
-            needed = settings.batch_size
+        if result["needed"]:
             logger.info(
-                f"Pool low for {area.value}: {current_count} questions. "
-                f"Generating {needed} more."
+                f"Pool replenishment complete: {result['generated']} questions added. "
+                f"Distribution: {result['by_area']}"
+            )
+        else:
+            logger.info(
+                f"Pool sufficient: {result['avg_unseen']:.1f} avg unseen per active user "
+                f"(threshold: {pool_manager.threshold})"
             )
 
-            try:
-                questions = await generator.generate_batch(area, count=needed)
+    except Exception as e:
+        logger.error(f"Question pool check failed: {e}")
 
-                # Store generated questions
-                for q in questions:
-                    await repo.create_question(
-                        content=q["question"],
-                        question_type=q.get("type", "multiple_choice"),
-                        options=q["options"],
-                        correct_answer=q["correct_answer"],
-                        explanation=q["explanation"],
-                        content_area=q["content_area"],
-                    )
+    logger.info("Question pool check completed")
 
-                logger.info(
-                    f"Generated {len(questions)} questions for {area.value}"
-                )
 
-            except Exception as e:
-                logger.error(f"Failed to generate questions for {area.value}: {e}")
-
-    logger.info("Question pool maintenance completed")
+# Keep old function name as alias for backwards compatibility
+maintain_question_pool = check_question_pool
 
 
 async def reset_daily_limits() -> None:

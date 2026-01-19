@@ -161,10 +161,11 @@ This document outlines the phased implementation plan for building AbaQuiz. Each
   - Generate single question via Claude API
   - Parse and validate JSON response
   - Handle 80/20 MC/TF distribution
-- [ ] 5.2 Implement question pool management
-  - Check pool levels per content area
-  - Batch generation function
-  - Store questions in database
+- [x] 5.2 Implement question pool management
+  - PoolManager class with active-user-based thresholds
+  - BCBA exam weight distribution
+  - Haiku-based deduplication
+  - Seeding script: `python -m src.scripts.seed_questions --count 250`
 - [ ] 5.3 Implement `src/services/usage_tracker.py`
   - Track token counts per API call
   - Calculate estimated costs
@@ -338,9 +339,11 @@ This document outlines the phased implementation plan for building AbaQuiz. Each
   - Question selection and delivery
   - Error handling with retry
 - [x] 9.3 Implement pool generation job
-  - Check pool levels
-  - Batch generate as needed
-  - Run daily/weekly
+  - Active-user-based threshold (avg unseen per active user < 20)
+  - BCBA exam weight distribution across 9 content areas
+  - Haiku-based deduplication checking
+  - Batch size of 50 questions when threshold hit
+  - Run daily at 3 AM Pacific
 - [ ] 9.4 Implement daily summary job (deferred - can be added later)
   - Compile stats
   - Send to admins with summaries enabled

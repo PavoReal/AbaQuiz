@@ -71,7 +71,7 @@ class Settings:
             "type_distribution",
             {"multiple_choice": 0.8, "true_false": 0.2},
         )
-        self.claude_model = gen_config.get("model", "claude-sonnet-4-20250514")
+        self.claude_model = gen_config.get("model", "claude-sonnet-4-5")
 
         # Question selection
         sel_config = self._config.get("question_selection", {})
@@ -88,6 +88,19 @@ class Settings:
         self.max_retries = err_config.get("max_retries", 3)
         self.retry_delays = err_config.get("retry_delays", [0, 5, 15])
 
+        # Pool management (active-user-based threshold system)
+        pool_config = self._config.get("pool_management", {})
+        self.pool_threshold = pool_config.get("threshold", 20)
+        self.pool_batch_size = pool_config.get("batch_size", 50)
+        self.pool_active_days = pool_config.get("active_days", 7)
+        self.pool_dedup_model = pool_config.get(
+            "dedup_model", "claude-haiku-4-5"
+        )
+        self.pool_dedup_check_limit = pool_config.get("dedup_check_limit", 50)
+        self.pool_bcba_weights: dict[str, float] = pool_config.get(
+            "bcba_weights", {}
+        )
+
         # Messages
         self.rejection_messages: list[str] = self._config.get(
             "rejection_messages", []
@@ -95,6 +108,12 @@ class Settings:
 
         # Pricing
         self.pricing = self._config.get("pricing", {})
+
+        # Web admin settings
+        web_config = self._config.get("web", {})
+        self.web_enabled = self._get_env_bool("WEB_ENABLED", web_config.get("enabled", True))
+        self.web_host = os.getenv("WEB_HOST", web_config.get("host", "127.0.0.1"))
+        self.web_port = int(os.getenv("WEB_PORT", web_config.get("port", 8080)))
 
     def _require_env(self, name: str) -> str:
         """Get required environment variable or raise error."""
@@ -105,6 +124,13 @@ class Settings:
                 f"Please set it in your .env file."
             )
         return value
+
+    def _get_env_bool(self, name: str, default: bool) -> bool:
+        """Get boolean from environment variable."""
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.lower() in ("true", "1", "yes")
 
     def _load_config(self) -> dict[str, Any]:
         """Load config.json with environment variable substitution."""

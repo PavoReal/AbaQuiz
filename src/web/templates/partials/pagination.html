@@ -1,0 +1,29 @@
+<nav aria-label="Pagination">
+    <ul>
+        {% if page > 1 %}
+        <li>
+            <a href="?page={{ page - 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+               hx-get="/tables/{{ table_name }}/rows?page={{ page - 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+               hx-target="#table-content">
+                &laquo; Previous
+            </a>
+        </li>
+        {% else %}
+        <li><span class="secondary">&laquo; Previous</span></li>
+        {% endif %}
+
+        <li><span>Page {{ page }} of {{ pages }}</span></li>
+
+        {% if page < pages %}
+        <li>
+            <a href="?page={{ page + 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+               hx-get="/tables/{{ table_name }}/rows?page={{ page + 1 }}&search={{ search }}&sort={{ sort_col }}&dir={{ sort_dir }}"
+               hx-target="#table-content">
+                Next &raquo;
+            </a>
+        </li>
+        {% else %}
+        <li><span class="secondary">Next &raquo;</span></li>
+        {% endif %}
+    </ul>
+</nav>

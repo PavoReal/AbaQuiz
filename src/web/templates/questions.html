@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Questions - AbaQuiz Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/">Home</a></li>
+        <li>Questions</li>
+    </ul>
+</nav>
+
+<h1>Questions</h1>
+<p>{{ total }} questions in pool</p>
+
+<div class="filters-bar" x-data="{
+    search: '{{ search }}',
+    content_area: '{{ content_area }}',
+    difficulty: '{{ difficulty }}'
+}">
+    <div class="filter-row">
+        <select name="content_area"
+                x-model="content_area"
+                hx-get="/questions/cards"
+                hx-trigger="change"
+                hx-target="#questions-content"
+                hx-include="[name='search'],[name='difficulty']">
+            <option value="">All Content Areas</option>
+            {% for area in content_areas %}
+            <option value="{{ area }}" {% if content_area == area %}selected{% endif %}>{{ area }}</option>
+            {% endfor %}
+        </select>
+
+        <select name="difficulty"
+                x-model="difficulty"
+                hx-get="/questions/cards"
+                hx-trigger="change"
+                hx-target="#questions-content"
+                hx-include="[name='search'],[name='content_area']">
+            <option value="">All Difficulties</option>
+            <option value="easy" {% if difficulty == 'easy' %}selected{% endif %}>Easy (1-2)</option>
+            <option value="medium" {% if difficulty == 'medium' %}selected{% endif %}>Medium (3)</option>
+            <option value="hard" {% if difficulty == 'hard' %}selected{% endif %}>Hard (4-5)</option>
+        </select>
+
+        <input type="search"
+               name="search"
+               placeholder="Search questions..."
+               x-model="search"
+               hx-get="/questions/cards"
+               hx-trigger="keyup changed delay:300ms"
+               hx-target="#questions-content"
+               hx-include="[name='content_area'],[name='difficulty']"
+               value="{{ search }}">
+    </div>
+</div>
+
+<div id="questions-content">
+    {% include "partials/question_cards.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% for row in rows %}
+<tr>
+    {% for col in columns %}
+    <td>
+        {% set val = row[col] %}
+        {% if loop.first %}
+        <a href="/tables/{{ table_name }}/{{ val }}">{{ (val | string)[:50] if val is not none else '-' }}{% if val is not none and (val | string) | length > 50 %}...{% endif %}</a>
+        {% else %}
+        {{ (val | string)[:50] if val is not none else '-' }}{% if val is not none and (val | string) | length > 50 %}...{% endif %}
+        {% endif %}
+    </td>
+    {% endfor %}
+</tr>
+{% else %}
+<tr>
+    <td colspan="{{ columns | length }}">No records found</td>
+</tr>
+{% endfor %}
+
+<tr id="pagination-row">
+    <td colspan="{{ columns | length }}">
+        {% include "partials/pagination.html" %}
+    </td>
+</tr>

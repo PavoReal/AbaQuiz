@@ -135,8 +135,12 @@ AbaQuiz/
 │   │   └── messages.py         # Message templates
 │   ├── services/
 │   │   ├── question_generator.py   # Claude API integration
+│   │   ├── pool_manager.py         # Question pool management
 │   │   ├── scheduler.py            # Quiz scheduling
 │   │   └── usage_tracker.py        # API cost tracking
+│   ├── scripts/
+│   │   ├── seed_questions.py       # Initial pool seeding CLI
+│   │   └── cleanup_questions.py    # Invalid question cleanup CLI
 │   ├── database/
 │   │   ├── models.py           # Table definitions
 │   │   ├── migrations.py       # Schema setup
@@ -151,8 +155,7 @@ AbaQuiz/
 ├── docker/
 │   ├── Dockerfile
 │   └── docker-compose.yml
-├── tests/                      # Test suite
-└── scripts/                    # Utility scripts
+└── tests/                      # Test suite
 ```
 
 ## Development
@@ -199,6 +202,97 @@ data/processed/
 ```
 
 The pipeline automatically filters BCBA-relevant materials and skips non-exam content (BCaBA, RBT, etc.). See [docs/preprocessing_guide.md](docs/preprocessing_guide.md) for the full guide.
+
+### Question Pool Seeding
+
+Seed the question pool with initial questions before launching:
+
+```bash
+# Generate 250 questions distributed by BCBA exam weights
+python -m src.scripts.seed_questions --count 250
+
+# Generate for specific content area only
+python -m src.scripts.seed_questions --area "Ethics" --count 50
+
+# Preview plan without generating (shows cost estimate)
+python -m src.scripts.seed_questions --dry-run
+
+# Fill gaps to reach target count (resumes from existing)
+python -m src.scripts.seed_questions --resume --count 300
+```
+
+**Cost estimate:** ~$4.50 for 250 questions (Sonnet for generation + Haiku for deduplication)
+
+### Database CLI
+
+Inspect and manage the question pool directly from the command line:
+
+```bash
+# Show pool statistics by content area
+python -m src.main --db-stats
+
+# List recent questions (default 20)
+python -m src.main --db-list
+python -m src.main --db-list --limit 50
+
+# Show full details of a specific question
+python -m src.main --db-show 42
+
+# Validate all questions have proper options
+python -m src.main --db-validate
+
+# Output as JSON for external tools (works with all --db-* commands)
+python -m src.main --db-stats --json
+python -m src.main --db-list --limit 10 --json
+python -m src.main --db-validate --json
+```
+
+### Question Cleanup
+
+Review and delete questions with invalid or missing options:
+
+```bash
+# Interactive review - see each invalid question and decide y/n to delete
+python -m src.scripts.cleanup_questions
+
+# Preview only - show all invalid questions without deleting
+python -m src.scripts.cleanup_questions --dry-run
+
+# Auto-delete all invalid questions without prompts
+python -m src.scripts.cleanup_questions --auto
+```
+
+### Web Admin Server
+
+Run the web admin interface independently:
+
+```bash
+# Run only the web server (no Telegram bot)
+python -m src.main --web-only
+```
+
+### Question Pool Management
+
+The bot automatically maintains the question pool using an active-user-based threshold:
+
+- **Threshold**: Generates new questions when average unseen questions per active user < 20
+- **Active user**: Anyone who answered a question in the last 7 days
+- **Batch size**: 50 questions per generation cycle
+- **Distribution**: Questions distributed by BCBA exam content area weights
+- **Deduplication**: Uses Claude Haiku to prevent similar questions
+- **Schedule**: Runs daily at 3 AM Pacific
+
+Configuration in `config/config.json`:
+```json
+{
+  "pool_management": {
+    "threshold": 20,
+    "batch_size": 50,
+    "active_days": 7,
+    "dedup_model": "claude-haiku-4-5"
+  }
+}
+```
 
 ## BCBA Content Areas
 

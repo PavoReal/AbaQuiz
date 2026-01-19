@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Record {{ record_id }} - {{ table_name }} - AbaQuiz Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/tables">Tables</a></li>
+        <li><a href="/tables/{{ table_name }}">{{ table_name }}</a></li>
+        <li>Record {{ record_id }}</li>
+    </ul>
+</nav>
+
+<h1>{{ table_name }} #{{ record_id }}</h1>
+
+<article>
+    <table>
+        <tbody>
+            {% for col in schema %}
+            <tr>
+                <th scope="row">
+                    {{ col.name }}
+                    {% if col.pk %}<mark>PK</mark>{% endif %}
+                </th>
+                <td>
+                    {% set val = record[col.name] %}
+                    {% if val is none %}
+                    <em class="secondary">NULL</em>
+                    {% elif val | string | length > 500 %}
+                    <details>
+                        <summary>{{ val | string | truncate(100) }}</summary>
+                        <pre>{{ val }}</pre>
+                    </details>
+                    {% else %}
+                    <pre style="white-space: pre-wrap; margin: 0;">{{ val }}</pre>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</article>
+
+<a href="/tables/{{ table_name }}" role="button" class="secondary">&larr; Back to {{ table_name }}</a>
+{% endblock %}

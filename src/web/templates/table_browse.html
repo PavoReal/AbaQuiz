@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ table_name }} - AbaQuiz Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/tables">Tables</a></li>
+        <li>{{ table_name }}</li>
+    </ul>
+</nav>
+
+<h1>{{ table_name }}</h1>
+<p>{{ total }} records</p>
+
+<div x-data="{ search: '{{ search }}' }">
+    <input type="search"
+           name="search"
+           placeholder="Search..."
+           x-model="search"
+           hx-get="/tables/{{ table_name }}/rows"
+           hx-trigger="keyup changed delay:300ms"
+           hx-target="#table-content"
+           hx-include="this"
+           :hx-vals="JSON.stringify({search: search, sort: '{{ sort_col }}', dir: '{{ sort_dir }}'})"
+           value="{{ search }}">
+</div>
+
+<div class="overflow-auto">
+    <table>
+        <thead>
+            <tr>
+                {% for col in columns %}
+                <th>
+                    <a href="?sort={{ col }}&dir={% if sort_col == col and sort_dir == 'asc' %}desc{% else %}asc{% endif %}&search={{ search }}"
+                       hx-get="/tables/{{ table_name }}/rows?sort={{ col }}&dir={% if sort_col == col and sort_dir == 'asc' %}desc{% else %}asc{% endif %}&search={{ search }}"
+                       hx-target="#table-content">
+                        {{ col }}
+                        {% if sort_col == col %}{% if sort_dir == 'asc' %}&#9650;{% else %}&#9660;{% endif %}{% endif %}
+                    </a>
+                </th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody id="table-content">
+            {% include "partials/table_rows.html" %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

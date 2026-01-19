@@ -322,6 +322,89 @@ class Repository:
             row = await cursor.fetchone()
             return row["count"] if row else 0
 
+    async def browse_questions(
+        self,
+        page: int = 1,
+        per_page: int = 20,
+        content_area: Optional[str] = None,
+        difficulty_min: Optional[int] = None,
+        difficulty_max: Optional[int] = None,
+        search: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Browse questions with filters for the admin UI.
+
+        Args:
+            page: Page number (1-indexed)
+            per_page: Items per page
+            content_area: Filter by content area
+            difficulty_min: Minimum difficulty (1-5)
+            difficulty_max: Maximum difficulty (1-5)
+            search: Search term for question content
+
+        Returns:
+            Dict with rows, total, page, per_page, pages, and content_areas
+        """
+        # Build query with filters
+        query = "SELECT * FROM questions WHERE 1=1"
+        count_query = "SELECT COUNT(*) as count FROM questions WHERE 1=1"
+        params: list[Any] = []
+
+        if content_area:
+            query += " AND content_area = ?"
+            count_query += " AND content_area = ?"
+            params.append(content_area)
+
+        if difficulty_min is not None:
+            query += " AND difficulty >= ?"
+            count_query += " AND difficulty >= ?"
+            params.append(difficulty_min)
+
+        if difficulty_max is not None:
+            query += " AND difficulty <= ?"
+            count_query += " AND difficulty <= ?"
+            params.append(difficulty_max)
+
+        if search:
+            query += " AND (content LIKE ? OR explanation LIKE ?)"
+            count_query += " AND (content LIKE ? OR explanation LIKE ?)"
+            params.extend([f"%{search}%", f"%{search}%"])
+
+        # Get total count
+        async with self.db.execute(count_query, params) as cursor:
+            count_row = await cursor.fetchone()
+            total = count_row["count"] if count_row else 0
+
+        # Add ordering and pagination
+        query += " ORDER BY created_at DESC"
+        offset = (page - 1) * per_page
+        query += f" LIMIT {per_page} OFFSET {offset}"
+
+        # Fetch rows
+        async with self.db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            questions = []
+            for row in rows:
+                q = dict(row)
+                q["options"] = json.loads(q["options"])
+                questions.append(q)
+
+        # Get distinct content areas for filter dropdown
+        async with self.db.execute(
+            "SELECT DISTINCT content_area FROM questions ORDER BY content_area"
+        ) as cursor:
+            area_rows = await cursor.fetchall()
+            content_areas = [r["content_area"] for r in area_rows]
+
+        return {
+            "rows": questions,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page if total > 0 else 1,
+            "content_areas": content_areas,
+        }
+
     # =========================================================================
     # Sent Questions Tracking
     # =========================================================================
@@ -816,6 +899,198 @@ class Repository:
         ) as cursor:
             row = await cursor.fetchone()
             return row["count"] if row else 0
+
+    # =========================================================================
+    # Pool Management Operations
+    # =========================================================================
+
+    async def get_active_user_count(self, days: int = 7) -> int:
+        """Get count of users who answered a question in the last N days."""
+        cutoff = datetime.now() - timedelta(days=days)
+        async with self.db.execute(
+            """
+            SELECT COUNT(DISTINCT user_id) as count
+            FROM user_answers
+            WHERE answered_at > ?
+            """,
+            (cutoff,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
+
+    async def get_avg_unseen_questions_for_active_users(self, days: int = 7) -> float:
+        """
+        Get average number of unseen questions per active user.
+
+        Active users = users who answered a question in the last N days.
+        Returns 0.0 if there are no active users.
+        """
+        async with self.db.execute(
+            """
+            SELECT AVG(total_questions - seen_count) as avg_unseen
+            FROM (
+                SELECT
+                    (SELECT COUNT(*) FROM questions) as total_questions,
+                    COALESCE(
+                        (SELECT COUNT(DISTINCT question_id)
+                         FROM sent_questions
+                         WHERE user_id = ua.user_id),
+                        0
+                    ) as seen_count
+                FROM (
+                    SELECT DISTINCT user_id
+                    FROM user_answers
+                    WHERE answered_at > datetime('now', ? || ' days')
+                ) ua
+            ) user_stats
+            """,
+            (f"-{days}",),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return float(row["avg_unseen"]) if row and row["avg_unseen"] else 0.0
+
+    async def get_questions_by_content_area(
+        self, content_area: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Get most recent questions for a content area."""
+        async with self.db.execute(
+            """
+            SELECT * FROM questions
+            WHERE content_area = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (content_area, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                q = dict(row)
+                q["options"] = json.loads(q["options"])
+                result.append(q)
+            return result
+
+    async def get_total_question_count(self) -> int:
+        """Get total count of questions in the pool."""
+        async with self.db.execute(
+            "SELECT COUNT(*) as count FROM questions"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
+
+    # =========================================================================
+    # Admin Web GUI - Generic Table Operations
+    # =========================================================================
+
+    async def get_all_tables(self) -> list[dict[str, Any]]:
+        """Get all table names with row counts."""
+        async with self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ) as cursor:
+            table_rows = await cursor.fetchall()
+
+        tables = []
+        for row in table_rows:
+            name = row["name"]
+            async with self.db.execute(f"SELECT COUNT(*) as count FROM [{name}]") as count_cursor:
+                count_row = await count_cursor.fetchone()
+                count = count_row["count"] if count_row else 0
+            tables.append({"name": name, "count": count})
+
+        return sorted(tables, key=lambda t: t["name"])
+
+    async def get_table_schema(self, table_name: str) -> list[dict[str, Any]]:
+        """Get column info for a table."""
+        # Validate table name first
+        tables = await self.get_all_tables()
+        if table_name not in [t["name"] for t in tables]:
+            raise ValueError(f"Invalid table: {table_name}")
+
+        async with self.db.execute(f"PRAGMA table_info([{table_name}])") as cursor:
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "name": row[1],
+                    "type": row[2],
+                    "nullable": not row[3],
+                    "pk": bool(row[5]),
+                }
+                for row in rows
+            ]
+
+    async def browse_table(
+        self,
+        table_name: str,
+        page: int = 1,
+        per_page: int = 25,
+        search: Optional[str] = None,
+        sort_col: Optional[str] = None,
+        sort_dir: str = "asc",
+    ) -> dict[str, Any]:
+        """Browse table with pagination, search, sorting."""
+        # Validate table
+        tables = await self.get_all_tables()
+        if table_name not in [t["name"] for t in tables]:
+            raise ValueError(f"Invalid table: {table_name}")
+
+        schema = await self.get_table_schema(table_name)
+        columns = [c["name"] for c in schema]
+
+        # Base query
+        query = f"SELECT * FROM [{table_name}]"
+        count_query = f"SELECT COUNT(*) as count FROM [{table_name}]"
+        params: list[Any] = []
+
+        # Search (across text columns)
+        if search:
+            text_cols = [c["name"] for c in schema if "TEXT" in (c["type"] or "").upper()]
+            if text_cols:
+                conditions = " OR ".join(f"[{col}] LIKE ?" for col in text_cols)
+                query += f" WHERE ({conditions})"
+                count_query += f" WHERE ({conditions})"
+                params.extend([f"%{search}%"] * len(text_cols))
+
+        # Count total
+        async with self.db.execute(count_query, params) as cursor:
+            count_row = await cursor.fetchone()
+            total = count_row["count"] if count_row else 0
+
+        # Sort
+        if sort_col and sort_col in columns:
+            direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+            query += f" ORDER BY [{sort_col}] {direction}"
+
+        # Paginate
+        offset = (page - 1) * per_page
+        query += f" LIMIT {per_page} OFFSET {offset}"
+
+        async with self.db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            row_dicts = [dict(zip(columns, row)) for row in rows]
+
+        return {
+            "rows": row_dicts,
+            "columns": columns,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page if total > 0 else 1,
+        }
+
+    async def get_record(self, table_name: str, record_id: int) -> Optional[dict[str, Any]]:
+        """Get single record by id."""
+        schema = await self.get_table_schema(table_name)
+        columns = [c["name"] for c in schema]
+        pk_col = next((c["name"] for c in schema if c["pk"]), "id")
+
+        async with self.db.execute(
+            f"SELECT * FROM [{table_name}] WHERE [{pk_col}] = ?",
+            [record_id],
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(zip(columns, row))
+            return None
 
 
 # Global repository instance

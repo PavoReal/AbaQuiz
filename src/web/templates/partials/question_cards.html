@@ -1,0 +1,98 @@
+{% for q in rows %}
+<article class="question-card" x-data="{ expanded: false, showExplanation: false }">
+    <header class="question-card-header">
+        <span class="question-id">#{{ q.id }}</span>
+        <span class="badge badge-{{ q.content_area | lower | replace(' ', '-') | replace(',', '') }}">{{ q.content_area }}</span>
+        <span class="difficulty-stars">
+            {% if q.difficulty %}
+                {% for i in range(q.difficulty) %}★{% endfor %}{% for i in range(5 - q.difficulty) %}☆{% endfor %}
+            {% else %}
+                —
+            {% endif %}
+        </span>
+        <span class="question-date">{{ q.created_at[:10] if q.created_at else '' }}</span>
+    </header>
+
+    <div class="question-body">
+        <div class="question-text">
+            <template x-if="!expanded">
+                <p>
+                    {{ q.content[:200] }}{% if q.content | length > 200 %}...
+                    <a href="#" @click.prevent="expanded = true" class="read-more">read more</a>
+                    {% endif %}
+                </p>
+            </template>
+            <template x-if="expanded">
+                <p>
+                    {{ q.content }}
+                    <a href="#" @click.prevent="expanded = false" class="read-less">show less</a>
+                </p>
+            </template>
+        </div>
+
+        <div class="options-grid">
+            {% for key, value in q.options.items() %}
+            <div class="option {% if key == q.correct_answer %}correct{% endif %}">
+                <span class="option-key">{{ key }})</span>
+                <span class="option-text">
+                    <template x-if="!expanded">
+                        <span>{{ value[:60] }}{% if value | length > 60 %}...{% endif %}</span>
+                    </template>
+                    <template x-if="expanded">
+                        <span>{{ value }}</span>
+                    </template>
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <footer class="question-card-footer">
+        <button class="outline" @click="showExplanation = !showExplanation" x-text="showExplanation ? 'Hide Explanation' : 'Show Explanation'"></button>
+        <a href="/tables/questions/{{ q.id }}" class="outline" role="button">View Details</a>
+    </footer>
+
+    <div class="explanation" x-show="showExplanation" x-collapse>
+        <blockquote>
+            <strong>Correct: {{ q.correct_answer }}</strong><br>
+            {{ q.explanation }}
+        </blockquote>
+    </div>
+</article>
+{% else %}
+<article class="question-card empty">
+    <p>No questions found matching your filters.</p>
+</article>
+{% endfor %}
+
+{% if total > 0 %}
+<nav aria-label="Pagination" class="questions-pagination">
+    <ul>
+        {% if page > 1 %}
+        <li>
+            <a href="?page={{ page - 1 }}&search={{ search }}&content_area={{ content_area }}&difficulty={{ difficulty }}"
+               hx-get="/questions/cards?page={{ page - 1 }}&search={{ search }}&content_area={{ content_area }}&difficulty={{ difficulty }}"
+               hx-target="#questions-content">
+                &laquo; Previous
+            </a>
+        </li>
+        {% else %}
+        <li><span class="secondary">&laquo; Previous</span></li>
+        {% endif %}
+
+        <li><span>Showing {{ ((page - 1) * per_page) + 1 }}-{{ [page * per_page, total] | min }} of {{ total }}</span></li>
+
+        {% if page < pages %}
+        <li>
+            <a href="?page={{ page + 1 }}&search={{ search }}&content_area={{ content_area }}&difficulty={{ difficulty }}"
+               hx-get="/questions/cards?page={{ page + 1 }}&search={{ search }}&content_area={{ content_area }}&difficulty={{ difficulty }}"
+               hx-target="#questions-content">
+                Next &raquo;
+            </a>
+        </li>
+        {% else %}
+        <li><span class="secondary">Next &raquo;</span></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}

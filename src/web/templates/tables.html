@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Tables - AbaQuiz Admin{% endblock %}
+{% block content %}
+<h1>Database Tables</h1>
+
+<table>
+    <thead>
+        <tr>
+            <th>Table Name</th>
+            <th>Row Count</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for table in tables %}
+        <tr>
+            <td><a href="/tables/{{ table.name }}">{{ table.name }}</a></td>
+            <td>{{ table.count }}</td>
+            <td><a href="/tables/{{ table.name }}" role="button" class="outline">Browse</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
