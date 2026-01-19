@@ -284,6 +284,7 @@ async def seed_questions(
                     correct_answer=q["correct_answer"],
                     explanation=q["explanation"],
                     content_area=q["content_area"],
+                    model=q.get("model"),
                 )
                 stored_count += 1
 

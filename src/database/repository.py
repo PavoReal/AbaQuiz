@@ -220,13 +220,14 @@ class Repository:
         correct_answer: str,
         explanation: str,
         content_area: str,
+        model: Optional[str] = None,
     ) -> int:
         """Create a new question and return its ID."""
         async with self.db.execute(
             """
             INSERT INTO questions
-            (content, question_type, options, correct_answer, explanation, content_area)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (content, question_type, options, correct_answer, explanation, content_area, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 content,
@@ -235,6 +236,7 @@ class Repository:
                 correct_answer,
                 explanation,
                 content_area,
+                model,
             ),
         ) as cursor:
             await self.db.commit()

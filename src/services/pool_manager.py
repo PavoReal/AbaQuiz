@@ -176,6 +176,7 @@ class PoolManager:
                         correct_answer=q["correct_answer"],
                         explanation=q["explanation"],
                         content_area=q["content_area"],
+                        model=q.get("model"),
                     )
 
                 logger.info(f"Generated {len(questions)} questions for {area.value}")

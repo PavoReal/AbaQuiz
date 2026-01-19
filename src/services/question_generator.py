@@ -230,10 +230,15 @@ class QuestionGenerator:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
-        self.processed_content_dir = Path("data/processed")
+        # Use absolute path from project root (not relative to working directory)
+        self.processed_content_dir = Path(__file__).parent.parent.parent / "data" / "processed"
 
     def _load_content_for_area(self, content_area: ContentArea) -> str:
-        """Load pre-processed markdown content for a content area."""
+        """Load pre-processed markdown content for a content area.
+
+        Raises:
+            FileNotFoundError: If no content files exist for the area.
+        """
         # Map content areas to file paths
         # Core materials (task_list, handbook, tco) contain content spanning multiple areas
         area_files = {
@@ -276,14 +281,30 @@ class QuestionGenerator:
         }
 
         content_parts = []
+        missing_files = []
+
         for file_path in area_files.get(content_area, []):
             full_path = self.processed_content_dir / file_path
             if full_path.exists():
-                content_parts.append(full_path.read_text())
+                content = full_path.read_text()
+                if content.strip():  # Check not empty
+                    content_parts.append(content)
+                else:
+                    logger.warning(f"Empty content file: {full_path}")
+                    missing_files.append(file_path)
+            else:
+                missing_files.append(file_path)
+
+        if missing_files:
+            logger.warning(f"Missing files for {content_area.value}: {missing_files}")
 
         if not content_parts:
-            logger.warning(f"No content found for {content_area.value}")
-            return ""
+            raise FileNotFoundError(
+                f"No content available for {content_area.value}. "
+                f"Missing files: {missing_files}. "
+                f"Content dir: {self.processed_content_dir}. "
+                f"Run preprocessing first: python -m src.preprocessing.run_preprocessing"
+            )
 
         return "\n\n---\n\n".join(content_parts)
 
@@ -328,7 +349,11 @@ class QuestionGenerator:
             question_category = self._select_category()
 
         # Load content
-        content = self._load_content_for_area(content_area)
+        try:
+            content = self._load_content_for_area(content_area)
+        except FileNotFoundError as e:
+            logger.error(f"Cannot generate question: {e}")
+            return None
 
         # Build user prompt with category and content-area specific guidance
         type_instruction = (
@@ -374,9 +399,10 @@ Generate a challenging but fair exam-style question that matches the requested s
             question_data = self._parse_question_json(response_text)
 
             if question_data:
-                # Add content area and category
+                # Add content area, category, and model
                 question_data["content_area"] = content_area.value
                 question_data["category"] = question_category.value
+                question_data["model"] = self.settings.claude_model
 
                 # Log usage
                 logger.info(
@@ -394,16 +420,36 @@ Generate a challenging but fair exam-style question that matches the requested s
         return None
 
     def _parse_question_json(self, text: str) -> Optional[dict[str, Any]]:
-        """Parse question JSON from response text."""
-        # Try direct parse
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Try to find JSON in response
+        """Parse question JSON from response text with better error handling."""
         import re
 
+        # Strip markdown code blocks if present
+        text = text.strip()
+        if text.startswith("```"):
+            # Remove ```json or ``` prefix and trailing ```
+            lines = text.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines)
+
+        # Try direct parse first
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            logger.debug(f"Direct JSON parse failed: {e}")
+
+        # Try to find JSON object in response - match outermost braces
+        # Use a non-greedy match that handles nested braces
+        json_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # Last resort: try to find any JSON-like structure
         json_match = re.search(r"\{[\s\S]*\}", text)
         if json_match:
             try:
@@ -411,7 +457,7 @@ Generate a challenging but fair exam-style question that matches the requested s
             except json.JSONDecodeError:
                 pass
 
-        logger.error(f"Failed to parse question JSON: {text[:200]}...")
+        logger.error(f"Failed to parse question JSON from: {text[:200]}...")
         return None
 
     async def generate_batch(
@@ -462,7 +508,12 @@ Generate a challenging but fair exam-style question that matches the requested s
         Returns:
             List of question dicts
         """
-        content = self._load_content_for_area(content_area)
+        try:
+            content = self._load_content_for_area(content_area)
+        except FileNotFoundError as e:
+            logger.error(f"Cannot generate batch: {e}")
+            return []
+
         area_guidance = CONTENT_AREA_GUIDANCE.get(content_area, "")
 
         user_prompt = f"""Generate exactly {count} BCBA exam questions about {content_area.value}.
@@ -510,8 +561,9 @@ Include a mix of multiple choice and true/false questions (approximately 80% MC,
                         normalized_opts[key] = val
                 q["options"] = normalized_opts
 
-                # Add content area
+                # Add content area and model
                 q["content_area"] = content_area.value
+                q["model"] = self.settings.claude_model
 
             logger.info(
                 f"Generated {len(questions)} questions for {content_area.value}: "

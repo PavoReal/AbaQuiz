@@ -64,20 +64,30 @@ async def run_migrations(db_path: str) -> None:
         current_version = await get_schema_version(db)
         logger.info(f"Current schema version: {current_version}")
 
-        # Add migrations here as the schema evolves
-        # Example:
-        # if current_version < 1:
-        #     await migrate_to_v1(db)
-        #     await set_schema_version(db, 1)
-        #
-        # if current_version < 2:
-        #     await migrate_to_v2(db)
-        #     await set_schema_version(db, 2)
+        # Migration v1: Add model column to questions table
+        if current_version < 1:
+            await migrate_to_v1(db)
+            await set_schema_version(db, 1)
 
         await db.commit()
 
 
-# Future migration functions can be added here
-# async def migrate_to_v1(db: aiosqlite.Connection) -> None:
-#     """Migration to schema version 1."""
-#     pass
+async def migrate_to_v1(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 1.
+
+    Adds 'model' column to questions table to track which Claude model
+    generated each question.
+    """
+    logger.info("Running migration v1: Adding model column to questions table")
+
+    # Check if column already exists (in case of partial migration)
+    async with db.execute("PRAGMA table_info(questions)") as cursor:
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+
+    if "model" not in column_names:
+        await db.execute("ALTER TABLE questions ADD COLUMN model TEXT")
+        logger.info("Added 'model' column to questions table")
+    else:
+        logger.info("Column 'model' already exists in questions table")
