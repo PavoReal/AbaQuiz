@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{% block title %}Question Generation - AbaQuiz Admin{% endblock %}
+
+{% block content %}
+<div x-data="generationControls()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-text-primary">Question Generation</h1>
+        <p class="text-sm text-text-muted mt-1">Generate and manage the question pool</p>
+    </div>
+
+    <!-- Pool Status Dashboard -->
+    <section class="mb-8">
+        <h2 class="text-lg font-semibold text-text-primary mb-4">Pool Status</h2>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <!-- Total Questions -->
+            <div class="stat-card">
+                <div class="stat-card-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="stat-card-value" x-text="poolStats.total_questions">{{ pool_stats.total_questions }}</div>
+                    <div class="stat-card-label">Total Questions</div>
+                </div>
+            </div>
+
+            <!-- Active Users -->
+            <div class="stat-card">
+                <div class="stat-card-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="stat-card-value" x-text="poolStats.active_users">{{ pool_stats.active_users }}</div>
+                    <div class="stat-card-label">Active Users (7d)</div>
+                </div>
+            </div>
+
+            <!-- Avg Unseen -->
+            <div class="stat-card">
+                <div class="stat-card-icon">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="stat-card-value" x-text="poolStats.avg_unseen">{{ pool_stats.avg_unseen }}</div>
+                    <div class="stat-card-label">Avg Unseen / User</div>
+                </div>
+            </div>
+
+            <!-- Health Status -->
+            <div class="stat-card">
+                <div class="stat-card-icon" :class="{
+                    'bg-success-subtle text-success': poolStats.health === 'healthy',
+                    'bg-warning-subtle text-warning': poolStats.health === 'warning',
+                    'bg-error-subtle text-error': poolStats.health === 'critical' || poolStats.health === 'empty'
+                }">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="stat-card-value capitalize" x-text="poolStats.health">{{ pool_stats.health }}</div>
+                    <div class="stat-card-label" x-text="poolStats.health_message">{{ pool_stats.health_message }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content Area Distribution -->
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-text-primary mb-4">Content Area Distribution</h3>
+            <div class="overflow-x-auto">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Content Area</th>
+                            <th class="text-right">Count</th>
+                            <th class="text-right">BCBA Weight</th>
+                            <th class="w-40">Distribution</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="area in poolStats.areas" :key="area.name">
+                            <tr>
+                                <td class="font-medium" x-text="area.name"></td>
+                                <td class="text-right font-mono" x-text="area.count"></td>
+                                <td class="text-right" x-text="area.weight_pct"></td>
+                                <td>
+                                    <div class="flex items-center gap-2">
+                                        <div class="flex-1 h-2 rounded-full overflow-hidden" style="background-color: var(--color-bg-muted);">
+                                            <div class="h-full rounded-full transition-all duration-300"
+                                                 style="background-color: var(--color-primary);"
+                                                 :style="{ width: area.progress_pct + '%' }"></div>
+                                        </div>
+                                        <span class="text-xs text-text-muted w-10 text-right" x-text="area.progress_pct + '%'"></span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Generation Controls -->
+    <section class="mb-8" x-show="!isRunning">
+        <h2 class="text-lg font-semibold text-text-primary mb-4">Generate Questions</h2>
+
+        <div class="card p-5">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Left: Controls -->
+                <div class="space-y-4">
+                    <!-- Question Count -->
+                    <div>
+                        <label class="block text-sm font-medium text-text-primary mb-1.5">
+                            Number of Questions
+                        </label>
+                        <input type="number"
+                               class="input"
+                               x-model.number="questionCount"
+                               min="1"
+                               max="500"
+                               @input="updateDistribution()">
+                        <p class="text-xs text-text-muted mt-1">
+                            Enter 1-500 questions to generate
+                        </p>
+                    </div>
+
+                    <!-- Skip Dedup Checkbox -->
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox"
+                               id="skip-dedup"
+                               class="checkbox"
+                               x-model="skipDedup">
+                        <label for="skip-dedup" class="text-sm text-text-primary">
+                            Skip deduplication checks
+                        </label>
+                    </div>
+                    <p class="text-xs text-text-muted -mt-2 ml-6">
+                        Faster but may generate similar questions
+                    </p>
+
+                    <!-- Cost Estimate -->
+                    <div class="p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
+                        <div class="text-sm font-medium text-text-primary mb-1">Estimated Cost</div>
+                        <div class="text-2xl font-bold" style="color: var(--color-primary);">
+                            $<span x-text="costEstimate.toFixed(2)">0.00</span>
+                        </div>
+                        <div class="text-xs text-text-muted mt-1">
+                            ~$0.09/question + $0.01/dedup
+                        </div>
+                    </div>
+
+                    <!-- Generate Button -->
+                    <button class="btn-primary w-full"
+                            @click="startGeneration()"
+                            :disabled="questionCount < 1 || questionCount > 500 || isStarting">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" x-show="!isStarting">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" x-show="isStarting">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-text="isStarting ? 'Starting...' : 'Generate Questions'"></span>
+                    </button>
+                </div>
+
+                <!-- Right: Distribution Preview -->
+                <div>
+                    <h3 class="text-sm font-semibold text-text-primary mb-3">Distribution Preview</h3>
+                    <div class="space-y-2 max-h-80 overflow-y-auto custom-scrollbar">
+                        <template x-for="(count, area) in distribution" :key="area">
+                            <div class="flex items-center justify-between p-2 rounded-md" style="background-color: var(--color-bg-subtle);">
+                                <span class="text-sm text-text-primary truncate" x-text="area"></span>
+                                <span class="text-sm font-mono font-medium" style="color: var(--color-primary);" x-text="count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Live Progress Section -->
+    <section x-show="isRunning || (progress && progress.complete)">
+        <h2 class="text-lg font-semibold text-text-primary mb-4">
+            <span x-show="isRunning">Generation in Progress</span>
+            <span x-show="!isRunning && progress && progress.complete">Generation Complete</span>
+        </h2>
+
+        <div id="progress-container"
+             hx-get="/generation/progress"
+             hx-trigger="load, every 1s[document.querySelector('#progress-container').dataset.polling === 'true']"
+             :data-polling="isRunning ? 'true' : 'false'">
+            {% include "partials/generation_progress.html" %}
+        </div>
+    </section>
+
+    <!-- Configuration Panel -->
+    <section class="mt-8">
+        <div class="card" x-data="{ configOpen: false }">
+            <button class="w-full flex items-center justify-between p-5 text-left"
+                    @click="configOpen = !configOpen">
+                <div>
+                    <h2 class="text-lg font-semibold text-text-primary">Configuration</h2>
+                    <p class="text-sm text-text-muted">Pool management settings</p>
+                </div>
+                <svg class="w-5 h-5 text-text-muted transition-transform duration-200"
+                     :class="{ 'rotate-180': configOpen }"
+                     fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+
+            <div x-show="configOpen" x-collapse class="border-t" style="border-color: var(--color-border-muted);">
+                <div class="p-5 space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Threshold -->
+                        <div>
+                            <label class="block text-sm font-medium text-text-primary mb-1.5">
+                                Pool Threshold
+                            </label>
+                            <input type="number"
+                                   class="input"
+                                   x-model.number="config.threshold"
+                                   min="5" max="100">
+                            <p class="text-xs text-text-muted mt-1">
+                                Min avg unseen questions per user
+                            </p>
+                        </div>
+
+                        <!-- Batch Size -->
+                        <div>
+                            <label class="block text-sm font-medium text-text-primary mb-1.5">
+                                Default Batch Size
+                            </label>
+                            <input type="number"
+                                   class="input"
+                                   x-model.number="config.batch_size"
+                                   min="10" max="200">
+                            <p class="text-xs text-text-muted mt-1">
+                                Questions per auto-replenish
+                            </p>
+                        </div>
+
+                        <!-- Dedup Model -->
+                        <div>
+                            <label class="block text-sm font-medium text-text-primary mb-1.5">
+                                Dedup Model
+                            </label>
+                            <select class="select" x-model="config.dedup_model">
+                                <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+                                <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                            </select>
+                            <p class="text-xs text-text-muted mt-1">
+                                Model for duplicate detection
+                            </p>
+                        </div>
+
+                        <!-- Confidence Threshold -->
+                        <div>
+                            <label class="block text-sm font-medium text-text-primary mb-1.5">
+                                Dedup Confidence
+                            </label>
+                            <select class="select" x-model="config.dedup_confidence_threshold">
+                                <option value="high">High only</option>
+                                <option value="medium">Medium + High</option>
+                                <option value="low">All levels</option>
+                            </select>
+                            <p class="text-xs text-text-muted mt-1">
+                                Min confidence to reject duplicate
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end gap-2 pt-4 border-t" style="border-color: var(--color-border-muted);">
+                        <button class="btn-secondary" @click="loadConfig()">Reset</button>
+                        <button class="btn-primary" @click="saveConfig()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script src="/static/js/generation.js"></script>
+{% endblock %}

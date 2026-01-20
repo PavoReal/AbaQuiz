@@ -92,6 +92,12 @@
                 </svg>
                 <span x-show="!collapsed" x-transition>Tables</span>
             </a>
+            <a href="/generation" class="nav-item {% if request.path.startswith('/generation') %}active{% endif %}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                <span x-show="!collapsed" x-transition>Generation</span>
+            </a>
         </nav>
 
         <!-- Footer with theme toggle -->

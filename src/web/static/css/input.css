@@ -316,6 +316,56 @@ body {
     border: 1px solid var(--color-neutral-border);
   }
 
+  .badge-success {
+    @apply badge;
+    background-color: var(--color-success-subtle);
+    color: var(--color-success);
+    border-color: var(--color-success-border);
+  }
+
+  .badge-warning {
+    @apply badge;
+    background-color: var(--color-warning-subtle);
+    color: var(--color-warning);
+    border-color: var(--color-warning-border);
+  }
+
+  .badge-danger {
+    @apply badge;
+    background-color: var(--color-error-subtle);
+    color: var(--color-error);
+    border-color: var(--color-error-border);
+  }
+
+  .badge-info {
+    @apply badge;
+    background-color: var(--color-info-subtle);
+    color: var(--color-info);
+    border-color: var(--color-info-border);
+  }
+
+  /* Checkbox */
+  .checkbox {
+    @apply w-4 h-4 rounded border cursor-pointer transition-all duration-150;
+    color: var(--color-primary);
+    border-color: var(--color-border-default);
+    background-color: var(--color-bg-base);
+  }
+
+  .checkbox:hover:not(:disabled) {
+    border-color: var(--color-border-emphasis);
+  }
+
+  .checkbox:focus {
+    @apply outline-none;
+    box-shadow: 0 0 0 3px var(--color-focus-ring);
+  }
+
+  .checkbox:checked {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
   /* Card */
   .card {
     @apply rounded-lg border;
@@ -522,6 +572,18 @@ body {
     @apply outline-none;
     box-shadow: 0 0 0 3px var(--color-focus-ring);
   }
+
+  /* Semantic background colors */
+  .bg-success-subtle { background-color: var(--color-success-subtle); }
+  .bg-warning-subtle { background-color: var(--color-warning-subtle); }
+  .bg-error-subtle { background-color: var(--color-error-subtle); }
+  .bg-info-subtle { background-color: var(--color-info-subtle); }
+
+  /* Semantic text colors */
+  .text-success { color: var(--color-success); }
+  .text-warning { color: var(--color-warning); }
+  .text-error { color: var(--color-error); }
+  .text-info { color: var(--color-info); }
 
   /* Scrollbar styling for webkit */
   .custom-scrollbar::-webkit-scrollbar {

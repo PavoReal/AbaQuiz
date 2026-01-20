@@ -1,0 +1,109 @@
+{% if progress %}
+<div class="card p-5">
+    <!-- Overall Progress -->
+    <div class="mb-6">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-text-primary">Overall Progress</span>
+            <span class="text-sm text-text-muted">
+                {{ progress.generated }} / {{ progress.total }} questions
+            </span>
+        </div>
+        <div class="h-3 rounded-full overflow-hidden" style="background-color: var(--color-bg-muted);">
+            {% set pct = (progress.generated / progress.total * 100) | int if progress.total > 0 else 0 %}
+            <div class="h-full rounded-full transition-all duration-500"
+                 style="background-color: var(--color-primary); width: {{ pct }}%;"></div>
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div class="p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
+            <div class="text-2xl font-bold" style="color: var(--color-success);">{{ progress.generated }}</div>
+            <div class="text-xs text-text-muted">Generated</div>
+        </div>
+        <div class="p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
+            <div class="text-2xl font-bold" style="color: var(--color-warning);">{{ progress.duplicates }}</div>
+            <div class="text-xs text-text-muted">Duplicates</div>
+        </div>
+        <div class="p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
+            <div class="text-2xl font-bold" style="color: var(--color-error);">{{ progress.errors }}</div>
+            <div class="text-xs text-text-muted">Errors</div>
+        </div>
+        <div class="p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
+            <div class="text-2xl font-bold" style="color: var(--color-primary);">${{ "%.2f" | format(progress.cost) }}</div>
+            <div class="text-xs text-text-muted">Cost</div>
+        </div>
+    </div>
+
+    <!-- Elapsed Time -->
+    <div class="flex items-center justify-between mb-4 p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
+        <span class="text-sm text-text-secondary">
+            <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Elapsed Time
+        </span>
+        <span class="text-sm font-mono text-text-primary">
+            {% set mins = (elapsed_seconds // 60) | int %}
+            {% set secs = (elapsed_seconds % 60) | int %}
+            {{ "%02d:%02d" | format(mins, secs) }}
+        </span>
+    </div>
+
+    <!-- Per-Area Progress -->
+    <div class="mb-6">
+        <h3 class="text-sm font-semibold text-text-primary mb-3">Content Area Progress</h3>
+        <div class="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+            {% for area in progress.areas %}
+            <div class="flex items-center gap-3 p-2 rounded-md" style="background-color: var(--color-bg-subtle);">
+                <!-- Status indicator -->
+                <div class="w-2 h-2 rounded-full flex-shrink-0"
+                     style="background-color: {% if area.status == 'complete' %}var(--color-success){% elif area.status == 'generating' %}var(--color-warning){% elif area.status == 'error' %}var(--color-error){% else %}var(--color-text-muted){% endif %};">
+                </div>
+                <!-- Area name -->
+                <span class="text-sm text-text-primary truncate flex-1">{{ area.name }}</span>
+                <!-- Progress -->
+                <span class="text-xs font-mono text-text-muted">{{ area.done }} / {{ area.target }}</span>
+                <!-- Progress bar -->
+                <div class="w-20 h-2 rounded-full overflow-hidden" style="background-color: var(--color-bg-muted);">
+                    {% set area_pct = (area.done / area.target * 100) | int if area.target > 0 else 0 %}
+                    <div class="h-full rounded-full transition-all duration-300"
+                         style="background-color: var(--color-primary); width: {{ area_pct }}%;"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex justify-end gap-2">
+        {% if running %}
+        <button class="btn-danger"
+                hx-post="/api/generation/cancel"
+                hx-swap="none"
+                hx-on::after-request="if(event.detail.successful) { window.dispatchEvent(new CustomEvent('generation-cancelled')); }">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+            Cancel Generation
+        </button>
+        {% else %}
+        <button class="btn-secondary"
+                @click="window.dispatchEvent(new CustomEvent('generation-reset'))">
+            Generate More
+        </button>
+        <button class="btn-primary"
+                @click="window.location.reload()">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Refresh Stats
+        </button>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<div class="card p-5 text-center">
+    <p class="text-text-muted">No generation in progress</p>
+</div>
+{% endif %}

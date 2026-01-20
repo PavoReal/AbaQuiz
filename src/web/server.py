@@ -53,6 +53,17 @@ def setup_routes(app: web.Application) -> None:
         review_question_partial,
         submit_review,
     )
+    from src.web.generation_routes import (
+        generation_page,
+        generation_progress_partial,
+        api_pool_stats,
+        api_get_config,
+        api_save_config,
+        api_start_generation,
+        api_get_progress,
+        api_cancel_generation,
+        api_calculate_distribution,
+    )
 
     app.router.add_get("/", index)
     app.router.add_get("/tables", tables_list)
@@ -65,3 +76,14 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_get("/review", review_page)
     app.router.add_get("/review/question", review_question_partial)  # HTMX partial
     app.router.add_post("/review/submit", submit_review)
+    # Generation routes
+    app.router.add_get("/generation", generation_page)
+    app.router.add_get("/generation/progress", generation_progress_partial)  # HTMX partial
+    # Generation API routes
+    app.router.add_get("/api/generation/pool-stats", api_pool_stats)
+    app.router.add_get("/api/generation/config", api_get_config)
+    app.router.add_post("/api/generation/config", api_save_config)
+    app.router.add_post("/api/generation/start", api_start_generation)
+    app.router.add_get("/api/generation/progress", api_get_progress)
+    app.router.add_post("/api/generation/cancel", api_cancel_generation)
+    app.router.add_get("/api/generation/distribution", api_calculate_distribution)

@@ -26,23 +26,38 @@ AbaQuiz is a Telegram bot for BCBA exam preparation. It delivers daily Applied B
 - pdfplumber for PDF preprocessing
 - Docker for deployment
 
+## Development Environment
+
+Always use the virtual environment (`.venv`) for all Python-related commands:
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Or prefix commands with .venv/bin/
+.venv/bin/python -m src.main
+```
+
 ## Commands
 
 ```bash
 # Run the bot
-python -m src.main
+.venv/bin/python -m src.main
+
+# Run the web admin interface
+.venv/bin/python -m src.main --web-only
 
 # Run preprocessing on BCBA PDFs (one-time)
-python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
+.venv/bin/python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
 
 # Run tests
-pytest tests/
+.venv/bin/pytest tests/
 
 # Run single test file
-pytest tests/test_handlers.py
+.venv/bin/pytest tests/test_handlers.py
 
 # Docker
-docker-compose -f docker/docker-compose.yml up --build
+docker-compose up --build
 ```
 
 ## Architecture

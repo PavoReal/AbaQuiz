@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  abaquiz:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: abaquiz-bot
+    restart: unless-stopped
+
+    # Environment file for secrets (TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY)
+    env_file:
+      - .env
+
+    # Additional environment variables
+    environment:
+      - DATABASE_PATH=/app/data/abaquiz.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TZ=${TZ:-America/Los_Angeles}
+      - WEB_ENABLED=${WEB_ENABLED:-true}
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8070
+
+    # Persistent volumes
+    volumes:
+      # Database and processed content
+      - ./data:/app/data
+      # Configuration file
+      - ./config:/app/config:ro
+
+    # Web admin port
+    ports:
+      - "8070:8070"
+
+    # Resource limits (adjust based on your server)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Web admin only (run with: docker compose --profile web up)
+  abaquiz-web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: abaquiz-web
+    restart: unless-stopped
+    profiles:
+      - web
+
+    env_file:
+      - .env
+
+    environment:
+      - DATABASE_PATH=/app/data/abaquiz.db
+      - WEB_ENABLED=true
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8070
+
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+
+    ports:
+      - "8070:8070"
+
+    command: ["python", "-m", "src.main", "--web-only"]
+
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M

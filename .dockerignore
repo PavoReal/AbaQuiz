@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+*.egg-info
+.eggs
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment and secrets (handled via env_file)
+.env
+.env.*
+!.env.example
+
+# Data (mounted as volume)
+data/
+*.db
+
+# Documentation
+*.md
+docs/
+
+# Tests
+tests/
+pytest.ini
+.pytest_cache
+.coverage
+htmlcov/
+
+# Build artifacts
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules (if any web frontend)
+node_modules/
+
+# Temporary files
+*.log
+*.tmp
+tmp/
+
+# Business documents
+business/
