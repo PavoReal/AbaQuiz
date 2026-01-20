@@ -405,6 +405,13 @@ async def send_question_to_user(
         content_area=content_area,
     )
 
+    # Fallback: if no question in selected content area, try any content area
+    if not question and content_area:
+        question = await repo.get_unseen_question_for_user(
+            internal_user_id,
+            content_area=None,
+        )
+
     if not question:
         # No questions available
         try:
@@ -614,6 +621,7 @@ async def answer_callback(
     # Format response
     if is_correct:
         response = messages.format_correct_answer(
+            explanation=question["explanation"],
             points_earned=points,
             streak=new_streak,
             new_achievement=new_achievement,
