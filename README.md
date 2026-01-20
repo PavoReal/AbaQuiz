@@ -63,22 +63,11 @@ A Telegram bot for BCBA (Board Certified Behavior Analyst) exam preparation. Del
 
 ## Configuration
 
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Yes | - | Telegram bot token from BotFather |
-| `ANTHROPIC_API_KEY` | Yes | - | Anthropic API key |
-| `DATABASE_PATH` | No | `./data/abaquiz.db` | SQLite database path |
-| `DEFAULT_TIMEZONE` | No | `America/Los_Angeles` | Default user timezone |
-| `LOG_LEVEL` | No | `INFO` | Logging level |
-
-### Application Settings
-
-Additional settings are in `config/config.json`:
-- Quiz delivery times
-- Rate limits
-- Question generation parameters
+Application settings are in `config/config.json`:
+- Quiz delivery times (morning/evening hours)
+- Rate limits (extra questions per day, requests per minute)
+- Question generation parameters (model, batch size, distribution)
+- Pool management (threshold, dedup settings, BCBA weights)
 - Admin user IDs
 
 ## User Commands
@@ -106,20 +95,96 @@ Additional settings are in `config/config.json`:
 | `/broadcast <message>` | Send message to all subscribers |
 | `/usage` | View 24h API usage and costs |
 
-## Docker Deployment
+## Deployment
 
-```bash
-# Build and run with docker-compose
-docker-compose -f docker/docker-compose.yml up --build
+### Docker (Recommended)
 
-# Run in detached mode
-docker-compose -f docker/docker-compose.yml up -d
-```
+1. **Create environment file:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your credentials
+   ```
+
+2. **Build and run:**
+   ```bash
+   # Build and start in detached mode
+   docker compose up -d --build
+
+   # View logs
+   docker compose logs -f
+
+   # Stop
+   docker compose down
+   ```
+
+3. **Access the web admin:**
+   Open `http://localhost:8070` in your browser.
 
 The Docker setup includes:
 - Automatic restart on failure
-- Persistent volumes for database and logs
+- Persistent volumes for database and config
 - Health checks
+- Web admin GUI on port 8070
+- Resource limits (512MB memory, 1 CPU)
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Yes | - | Telegram bot token from BotFather |
+| `ANTHROPIC_API_KEY` | Yes | - | Anthropic API key |
+| `DATABASE_PATH` | No | `./data/abaquiz.db` | SQLite database path |
+| `LOG_LEVEL` | No | `INFO` | Logging level |
+| `TZ` | No | `America/Los_Angeles` | Container timezone |
+| `WEB_ENABLED` | No | `true` | Enable web admin interface |
+| `WEB_PORT` | No | `8070` | Web admin port |
+
+### Production Deployment
+
+For production, consider:
+
+1. **Use a reverse proxy** (nginx/Caddy) for HTTPS:
+   ```nginx
+   server {
+       listen 443 ssl;
+       server_name abaquiz.example.com;
+
+       location / {
+           proxy_pass http://localhost:8070;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   ```
+
+2. **Set up automated backups** for the database:
+   ```bash
+   # Add to crontab
+   0 2 * * * cp /path/to/data/abaquiz.db /path/to/backups/abaquiz-$(date +\%Y\%m\%d).db
+   ```
+
+3. **Monitor with Docker health checks:**
+   ```bash
+   docker inspect --format='{{.State.Health.Status}}' abaquiz-bot
+   ```
+
+4. **Update deployment:**
+   ```bash
+   git pull
+   docker compose up -d --build
+   ```
+
+### Web-Only Mode
+
+Run just the web admin interface (useful for review/management):
+
+```bash
+# Docker
+docker compose --profile web up abaquiz-web
+
+# Local
+.venv/bin/python -m src.main --web-only
+```
 
 ## Project Structure
 
@@ -141,6 +206,12 @@ AbaQuiz/
 │   ├── scripts/
 │   │   ├── seed_questions.py       # Initial pool seeding CLI
 │   │   └── cleanup_questions.py    # Invalid question cleanup CLI
+│   ├── web/
+│   │   ├── server.py               # Web server setup
+│   │   ├── routes.py               # Page routes
+│   │   ├── generation_routes.py    # Question generation API
+│   │   ├── templates/              # Jinja2 templates
+│   │   └── static/                 # CSS, JS assets
 │   ├── database/
 │   │   ├── models.py           # Table definitions
 │   │   ├── migrations.py       # Schema setup
@@ -153,8 +224,8 @@ AbaQuiz/
 │   ├── processed/              # BCBA study content (markdown)
 │   └── raw/                    # Original PDF files
 ├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
+│   └── Dockerfile
+├── docker-compose.yml          # Docker Compose config
 └── tests/                      # Test suite
 ```
 
