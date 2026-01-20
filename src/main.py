@@ -180,7 +180,22 @@ async def run_web_only() -> None:
 
     # Cleanup
     logger.info("Shutting down...")
+
+    # Cancel any running generation task
+    try:
+        from src.web.generation_routes import _generation_state
+        if _generation_state.get("task") and not _generation_state["task"].done():
+            logger.info("Cancelling running generation task...")
+            _generation_state["task"].cancel()
+            try:
+                await _generation_state["task"]
+            except asyncio.CancelledError:
+                pass
+    except ImportError:
+        pass
+
     await runner.cleanup()
+    await close_repository()
     logger.info("Web server stopped")
 
 

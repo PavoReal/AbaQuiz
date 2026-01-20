@@ -3,16 +3,19 @@ Route handlers for Question Generation page in AbaQuiz Admin GUI.
 """
 
 import asyncio
-from datetime import datetime
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any
 
 from aiohttp import web
 import aiohttp_jinja2
 
 from src.config.constants import ContentArea
+from src.config.logging import get_logger
 from src.config.settings import get_settings
 from src.database.repository import get_repository
 from src.services.pool_manager import get_pool_manager, BCBA_WEIGHTS
+
+logger = get_logger(__name__)
 
 
 # In-memory storage for generation progress (resets on restart)
@@ -212,7 +215,7 @@ async def api_start_generation(request: web.Request) -> web.Response:
             {"name": area, "target": target, "done": 0}
             for area, target in distribution.items()
         ],
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
         "complete": False,
         "skip_dedup": skip_dedup,
     }
@@ -264,9 +267,13 @@ async def _run_generation(
     COST_PER_QUESTION = 0.09  # ~$0.09/question for Sonnet
     COST_PER_DEDUP = 0.002  # ~$0.002/dedup check for Haiku
 
+    def is_cancelled() -> bool:
+        """Check if cancellation was requested."""
+        return _generation_state["cancel_requested"]
+
     try:
         for area_name, target_count in distribution.items():
-            if _generation_state["cancel_requested"]:
+            if is_cancelled():
                 break
 
             if target_count <= 0:
@@ -333,9 +340,13 @@ async def _run_generation(
                         area_info["error"] = str(e)
                         break
 
+    except asyncio.CancelledError:
+        logger.info("Generation task was cancelled")
+        progress["cancelled"] = True
+        raise
     finally:
         progress["complete"] = True
-        progress["finished_at"] = datetime.utcnow().isoformat()
+        progress["finished_at"] = datetime.now(timezone.utc).isoformat()
         _generation_state["running"] = False
         _generation_state["task"] = None
 
@@ -361,7 +372,7 @@ async def api_get_progress(request: web.Request) -> web.Response:
             finished = datetime.fromisoformat(progress["finished_at"])
             elapsed = (finished - started).total_seconds()
         else:
-            elapsed = (datetime.utcnow() - started).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
         progress["elapsed_seconds"] = int(elapsed)
 
     return web.json_response(progress)
@@ -382,7 +393,7 @@ async def generation_progress_partial(request: web.Request) -> dict:
             finished = datetime.fromisoformat(progress["finished_at"])
             elapsed = (finished - started).total_seconds()
         else:
-            elapsed = (datetime.utcnow() - started).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
         elapsed_seconds = int(elapsed)
     else:
         elapsed_seconds = 0
