@@ -337,6 +337,7 @@ def format_help() -> str:
 📝 *Quiz*
 /quiz - Get a practice question
 /quiz [area] - Question from specific area
+/daily - View latest daily question
 /areas - List content areas
 
 📊 *Progress*
@@ -388,3 +389,58 @@ def format_admin_help() -> str:
 /notify - Notification settings
 
 _<user> can be @username or user ID_"""
+
+
+def format_no_daily_questions(timezone: str) -> str:
+    """Format message when user has no daily questions yet."""
+    return f"""You haven't received any daily questions yet.
+
+Daily questions are delivered at:
+  - 8:00 AM ({timezone})
+  - 8:00 PM ({timezone})
+
+In the meantime, use /quiz to practice anytime!"""
+
+
+def format_daily_question_summary(question_data: dict[str, Any]) -> str:
+    """Format a summary of an answered daily question."""
+    content = question_data["content"]
+    content_area = question_data.get("content_area", "")
+    user_answer = question_data["user_answer"]
+    correct_answer = question_data["correct_answer"]
+    is_correct = question_data["is_correct"]
+    explanation = question_data.get("explanation", "")
+    options = question_data.get("options", {})
+    question_type = question_data.get("question_type", "multiple_choice")
+
+    lines = ["*Your latest daily question:*\n"]
+
+    if content_area:
+        lines.append(f"_{content_area}_\n")
+
+    lines.append(content)
+    lines.append("")
+
+    # Show options for multiple choice with markers
+    if question_type == "multiple_choice" and options:
+        for key in ["A", "B", "C", "D"]:
+            if key in options:
+                marker = ""
+                if key.upper() == correct_answer.upper():
+                    marker = " [Correct]"
+                elif key.upper() == user_answer.upper():
+                    marker = " [Your answer]"
+                lines.append(f"*{key}.* {options[key]}{marker}")
+        lines.append("")
+
+    if is_correct:
+        lines.append("*Result:* Correct!")
+    else:
+        lines.append(f"*Result:* Incorrect")
+        lines.append(f"You answered: *{user_answer}*")
+        lines.append(f"Correct answer: *{correct_answer}*")
+
+    if explanation:
+        lines.append(f"\n*Explanation:*\n{explanation}")
+
+    return "\n".join(lines)

@@ -11,6 +11,7 @@ from typing import Optional
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from src.bot import keyboards, messages
@@ -192,11 +193,15 @@ async def focus_callback(
 
     context.user_data["selected_focus_areas"] = selected
 
-    # Update keyboard
-    await query.edit_message_text(
-        messages.format_focus_areas_prompt(),
-        reply_markup=keyboards.build_focus_areas_keyboard(selected),
-    )
+    # Update keyboard (ignore error if message content unchanged)
+    try:
+        await query.edit_message_text(
+            messages.format_focus_areas_prompt(),
+            reply_markup=keyboards.build_focus_areas_keyboard(selected),
+        )
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise
 
 
 # =============================================================================
@@ -305,6 +310,60 @@ async def quiz_area_callback(
         content_area=content_area,
         is_scheduled=False,
     )
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+@ensure_user_exists
+async def daily_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /daily command - show latest daily question."""
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    log_user_action(logger, user.id, "/daily")
+
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await update.message.reply_text("Please use /start first.")
+        return
+
+    daily_question = await repo.get_latest_daily_question_for_user(db_user["id"])
+
+    if not daily_question:
+        # No daily questions yet
+        await update.message.reply_text(
+            messages.format_no_daily_questions(db_user["timezone"]),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    if daily_question["user_answer"] is None:
+        # Unanswered - resend with answer buttons
+        question_text = messages.format_question(daily_question, show_area=True)
+        keyboard = keyboards.build_answer_keyboard(
+            question_id=daily_question["question_id"],
+            question_type=daily_question["question_type"],
+            options=daily_question.get("options"),
+        )
+        await update.message.reply_text(
+            f"*Your latest daily question:*\n\n{question_text}",
+            reply_markup=keyboard,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    else:
+        # Answered - show result summary
+        await update.message.reply_text(
+            messages.format_daily_question_summary(daily_question),
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 async def send_question_to_user(

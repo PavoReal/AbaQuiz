@@ -438,6 +438,42 @@ class Repository:
             await self.db.commit()
             return cursor.lastrowid
 
+    async def get_latest_daily_question_for_user(
+        self, user_id: int
+    ) -> Optional[dict[str, Any]]:
+        """Get the most recent scheduled (daily) question sent to a user."""
+        async with self.db.execute(
+            """
+            SELECT
+                sq.question_id,
+                sq.message_id,
+                sq.sent_at,
+                q.content,
+                q.question_type,
+                q.options,
+                q.correct_answer,
+                q.explanation,
+                q.content_area,
+                ua.user_answer,
+                ua.is_correct,
+                ua.answered_at
+            FROM sent_questions sq
+            JOIN questions q ON sq.question_id = q.id
+            LEFT JOIN user_answers ua
+                ON ua.question_id = sq.question_id AND ua.user_id = sq.user_id
+            WHERE sq.user_id = ? AND sq.is_scheduled = 1
+            ORDER BY sq.sent_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                result = dict(row)
+                result["options"] = json.loads(result["options"])
+                return result
+            return None
+
     # =========================================================================
     # Answer Operations
     # =========================================================================
@@ -1463,3 +1499,11 @@ async def get_repository(db_path: str) -> Repository:
         _repository = Repository(db_path)
         await _repository.connect()
     return _repository
+
+
+async def close_repository() -> None:
+    """Close the global repository instance."""
+    global _repository
+    if _repository is not None:
+        await _repository.close()
+        _repository = None

@@ -15,6 +15,7 @@ import signal
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
 from src.database.migrations import initialize_database
+from src.database.repository import close_repository
 from src.services.content_validator import validate_content_on_startup
 
 logger = get_logger(__name__)
@@ -200,6 +201,7 @@ def register_handlers(application) -> None:
         achievements_command,
         answer_callback,
         areas_command,
+        daily_command,
         focus_callback,
         health_command,
         help_command,
@@ -220,6 +222,7 @@ def register_handlers(application) -> None:
     # User command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("quiz", quiz_command))
+    application.add_handler(CommandHandler("daily", daily_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("streak", streak_command))
     application.add_handler(CommandHandler("achievements", achievements_command))
@@ -354,6 +357,10 @@ async def run_bot() -> None:
 
     # Clean up scheduler on shutdown
     stop_scheduler()
+
+    # Clean up database connection
+    await close_repository()
+
     logger.info("Bot stopped")
 
 
