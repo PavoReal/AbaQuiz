@@ -206,6 +206,9 @@ def register_handlers(application) -> None:
         noop_callback,
         quiz_area_callback,
         quiz_command,
+        report_callback,
+        report_cancel_callback,
+        report_submit_callback,
         settings_command,
         start_command,
         stats_command,
@@ -250,6 +253,16 @@ def register_handlers(application) -> None:
     )
     application.add_handler(
         CallbackQueryHandler(noop_callback, pattern=r"^noop$")
+    )
+    # Report handlers
+    application.add_handler(
+        CallbackQueryHandler(report_callback, pattern=r"^report:\d+$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(report_submit_callback, pattern=r"^report_submit:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(report_cancel_callback, pattern=r"^report_cancel$")
     )
 
     logger.info("Registered all handlers")

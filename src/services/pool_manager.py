@@ -3,12 +3,15 @@ Question pool management service for AbaQuiz.
 
 Manages the question pool using active-user-based thresholds,
 BCBA exam weight distribution, and Haiku-based deduplication.
+Uses AsyncAnthropic for non-blocking API calls.
 """
 
+import asyncio
 import json
 from typing import Any, Optional
 
 import anthropic
+from anthropic import AsyncAnthropic
 
 from src.config.constants import ContentArea
 from src.config.logging import get_logger
@@ -31,27 +34,53 @@ BCBA_WEIGHTS: dict[ContentArea, float] = {
     ContentArea.PHILOSOPHICAL_UNDERPINNINGS: 0.05,
 }
 
-# Deduplication prompt for Haiku
-DEDUP_PROMPT = """You are checking if a new quiz question is too similar to existing questions.
+# Enhanced deduplication prompt with examples and clear confidence criteria
+DEDUP_PROMPT = """Determine if a new quiz question is too similar to existing questions in the pool.
 
-Two questions are "too similar" if:
-- They test the exact same concept with only superficial wording changes
-- The scenarios are nearly identical with minor detail swaps (names, numbers, settings)
-- The core knowledge being tested is identical, just phrased differently
+<similarity_criteria>
+TOO SIMILAR (reject as duplicate):
+- Tests the exact same specific concept with only superficial wording changes
+- Scenarios are nearly identical with minor detail swaps (names, numbers, settings)
+- Core knowledge being tested is identical, just phrased differently
+- Would feel repetitive to a student seeing both questions
 
-Two questions are NOT too similar if:
-- They test different aspects of the same broad topic
-- They require different reasoning or application of concepts
-- They present meaningfully different scenarios even if on the same topic
+NOT TOO SIMILAR (accept as unique):
+- Tests different aspects or applications of the same broad topic
+- Requires different reasoning paths or knowledge application
+- Presents meaningfully different scenarios even if on the same topic
+- Would provide additional learning value to a student
+</similarity_criteria>
 
-NEW QUESTION:
+<examples>
+SIMILAR - Should REJECT:
+- "What is the primary purpose of an FBA?" vs "The main goal of a functional behavior assessment is to..."
+- "John hits when denied iPad access. What is the likely function?" vs "Sarah hits when her tablet is taken away. What function is this?"
+- "Which is an example of positive reinforcement?" vs "Positive reinforcement is demonstrated when..."
+
+NOT SIMILAR - Should ACCEPT:
+- "What is the primary purpose of an FBA?" vs "Which assessment method identifies if behavior is maintained by escape?"
+- "John hits when denied iPad - what function?" vs "After FBA reveals attention function, which intervention is appropriate?"
+- "Define positive reinforcement" vs "A child receives candy after cleaning. What happens to cleaning behavior?"
+</examples>
+
+<confidence_levels>
+- high: Nearly identical questions testing the exact same specific concept - REJECT
+- medium: Same general topic area but possibly testing different specific aspects - consider accepting
+- low: Related topic but clearly different focus or application - ACCEPT
+</confidence_levels>
+
+<new_question>
 {new_question}
+</new_question>
 
-EXISTING QUESTIONS:
+<existing_questions>
 {existing_questions}
+</existing_questions>
 
+<output_format>
 Respond with valid JSON only:
-{{"is_duplicate": true/false, "reason": "brief explanation", "confidence": "high/medium/low"}}"""
+{{"is_duplicate": true/false, "reason": "brief specific explanation", "confidence": "high/medium/low"}}
+</output_format>"""
 
 
 class PoolManager:
@@ -60,40 +89,38 @@ class PoolManager:
 
     Triggers generation when avg unseen questions per active user < threshold.
     Uses BCBA exam weights for content area distribution.
-    Uses Claude Haiku for deduplication checking.
+    Uses Claude Haiku for deduplication checking with rate limiting.
     """
 
     DEFAULT_THRESHOLD = 20
     DEFAULT_BATCH_SIZE = 50
     ACTIVE_DAYS = 7
-    DEDUP_CHECK_LIMIT = 30  # Check against most recent N questions per area (reduced from 50)
+    DEDUP_CHECK_LIMIT = 30  # Check against most recent N questions per area
+
+    # Rate limiting for API calls
+    MAX_CONCURRENT_DEDUP_CALLS = 5
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
+        # Use AsyncAnthropic for non-blocking API calls
+        self.client = AsyncAnthropic(api_key=self.settings.anthropic_api_key)
 
-        # Load pool management settings from config if available
-        pool_config = self.settings._config.get("pool_management", {})
-        self.threshold = pool_config.get("threshold", self.DEFAULT_THRESHOLD)
-        self.batch_size = pool_config.get("batch_size", self.DEFAULT_BATCH_SIZE)
-        self.dedup_model = pool_config.get("dedup_model", "claude-haiku-4-5")
+        # Semaphore for rate limiting dedup API calls
+        self._dedup_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_DEDUP_CALLS)
 
-        # Dedup optimization settings
-        self.dedup_check_limit = pool_config.get(
-            "dedup_check_limit", self.DEDUP_CHECK_LIMIT
-        )
-        self.dedup_confidence_threshold = pool_config.get(
-            "dedup_confidence_threshold", "high"
-        )
-        self.dedup_early_exit_batches = pool_config.get(
-            "dedup_early_exit_batches", 3
-        )
-        self.generation_batch_size = pool_config.get("generation_batch_size", 5)
+        # Load pool management settings from settings class
+        self.threshold = self.settings.pool_threshold
+        self.batch_size = self.settings.pool_batch_size
+        self.dedup_model = self.settings.pool_dedup_model
+        self.dedup_check_limit = self.settings.pool_dedup_check_limit
+        self.dedup_confidence_threshold = self.settings.pool_dedup_confidence_threshold
+        self.dedup_early_exit_batches = self.settings.pool_dedup_early_exit_batches
+        self.generation_batch_size = self.settings.pool_generation_batch_size
 
-        self.bcba_weights = pool_config.get("bcba_weights", None)
-
-        # Convert string keys to ContentArea if weights from config
+        # Load BCBA weights from config or use defaults
+        self.bcba_weights = self.settings.pool_bcba_weights
         if self.bcba_weights:
+            # Convert string keys to ContentArea if weights from config
             self.bcba_weights = {
                 ContentArea(k) if isinstance(k, str) else k: v
                 for k, v in self.bcba_weights.items()
@@ -250,7 +277,7 @@ class PoolManager:
             if len(unique_questions) >= count:
                 break
 
-            # Generate batch of questions (5 at a time)
+            # Generate batch of questions
             batch = await generator.generate_question_batch(
                 content_area=content_area,
                 count=batch_size,
@@ -363,6 +390,7 @@ class PoolManager:
         Check if a new question is too similar to existing questions.
 
         Uses Claude Haiku for semantic similarity checking with optimizations:
+        - Rate limiting via semaphore
         - Confidence-based filtering: only reject high-confidence duplicates
         - Early exit: stop after N consecutive clean batches
 
@@ -398,11 +426,13 @@ class PoolManager:
             )
 
             try:
-                response = self.client.messages.create(
-                    model=self.dedup_model,
-                    max_tokens=256,
-                    messages=[{"role": "user", "content": prompt}],
-                )
+                # Use semaphore for rate limiting
+                async with self._dedup_semaphore:
+                    response = await self.client.messages.create(
+                        model=self.dedup_model,
+                        max_tokens=256,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
 
                 # Extract text from response
                 content_block = response.content[0]
@@ -445,6 +475,32 @@ class PoolManager:
                         f"Early exit after {consecutive_clean} clean batches"
                     )
                     return False
+
+            except anthropic.RateLimitError as e:
+                # On rate limit, wait and retry once
+                logger.warning(f"Dedup rate limited, waiting 5s: {e}")
+                await asyncio.sleep(5)
+                try:
+                    async with self._dedup_semaphore:
+                        response = await self.client.messages.create(
+                            model=self.dedup_model,
+                            max_tokens=256,
+                            messages=[{"role": "user", "content": prompt}],
+                        )
+                    # Process response same as above
+                    content_block = response.content[0]
+                    if hasattr(content_block, "text"):
+                        result = self._parse_dedup_result(content_block.text)
+                        if result and result.get("is_duplicate"):
+                            confidence = result.get("confidence", "high")
+                            if confidence == "high" or (
+                                confidence == "medium"
+                                and self.dedup_confidence_threshold != "high"
+                            ):
+                                return True
+                except Exception:
+                    pass
+                consecutive_clean += 1
 
             except Exception as e:
                 # Log warning but don't block on dedup failure

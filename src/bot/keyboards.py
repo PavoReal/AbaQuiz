@@ -328,3 +328,65 @@ def build_confirmation_keyboard(
     ]
 
     return InlineKeyboardMarkup(buttons)
+
+
+def build_report_button(question_id: int) -> InlineKeyboardMarkup:
+    """
+    Build a single "Report Issue" button to show after answer feedback.
+
+    Args:
+        question_id: Question ID for callback data
+
+    Returns:
+        InlineKeyboardMarkup with report button
+    """
+    buttons = [
+        [
+            InlineKeyboardButton(
+                "⚠️ Report Issue",
+                callback_data=f"report:{question_id}",
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def build_report_type_keyboard(question_id: int) -> InlineKeyboardMarkup:
+    """
+    Build keyboard for selecting report type.
+
+    Args:
+        question_id: Question ID for callback data
+
+    Returns:
+        InlineKeyboardMarkup with report type options
+    """
+    report_types = [
+        ("incorrect_answer", "Incorrect Answer"),
+        ("confusing_wording", "Confusing Wording"),
+        ("outdated_content", "Outdated Content"),
+        ("other", "Other Issue"),
+    ]
+
+    buttons = []
+    for report_type, label in report_types:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"report_submit:{question_id}:{report_type}",
+                )
+            ]
+        )
+
+    # Add cancel button
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data="report_cancel",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(buttons)

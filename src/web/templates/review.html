@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Expert Review - AbaQuiz Admin{% endblock %}
+{% block content %}
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-4">
+    <ol class="flex items-center gap-2 text-sm">
+        <li><a href="/" class="text-text-muted hover:text-text-primary transition-colors">Home</a></li>
+        <li class="text-text-disabled">/</li>
+        <li class="text-text-primary font-medium">Expert Review</li>
+    </ol>
+</nav>
+
+<div class="flex items-baseline gap-4 mb-6">
+    <h1 class="text-2xl font-semibold tracking-tight text-text-primary">Expert Review</h1>
+    <span class="text-sm text-text-muted">
+        {{ queue_counts.get('unreviewed', 0) }} unreviewed
+        {% if queue_counts.get('approved', 0) %} | {{ queue_counts.get('approved', 0) }} approved{% endif %}
+        {% if queue_counts.get('rejected', 0) %} | {{ queue_counts.get('rejected', 0) }} rejected{% endif %}
+    </span>
+</div>
+
+<!-- Filters -->
+<div class="mb-6 flex items-center gap-4">
+    <select name="content_area"
+            class="select min-w-[200px]"
+            hx-get="/review"
+            hx-trigger="change"
+            hx-push-url="true"
+            hx-target="body"
+            hx-swap="outerHTML">
+        <option value="">All Content Areas</option>
+        {% for area in content_areas %}
+        <option value="{{ area }}" {% if current_area == area %}selected{% endif %}>{{ area }}</option>
+        {% endfor %}
+    </select>
+
+    <div class="flex-1"></div>
+
+    <!-- Jump to question ID -->
+    <form hx-get="/review" hx-push-url="true" hx-target="body" hx-swap="outerHTML" class="flex items-center gap-2">
+        <input type="hidden" name="content_area" value="{{ current_area }}">
+        <input type="number" name="id" placeholder="Question ID" class="input w-32" min="1">
+        <button type="submit" class="btn btn-secondary">Go</button>
+    </form>
+</div>
+
+<!-- Question Review Content -->
+<div id="review-content" x-data="{ currentArea: '{{ current_area }}' }">
+    {% include "partials/review_question.html" %}
+</div>
+{% endblock %}

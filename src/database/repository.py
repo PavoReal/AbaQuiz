@@ -221,13 +221,15 @@ class Repository:
         explanation: str,
         content_area: str,
         model: Optional[str] = None,
+        source_citation: Optional[dict[str, Any]] = None,
     ) -> int:
         """Create a new question and return its ID."""
+        citation_json = json.dumps(source_citation) if source_citation else None
         async with self.db.execute(
             """
             INSERT INTO questions
-            (content, question_type, options, correct_answer, explanation, content_area, model)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (content, question_type, options, correct_answer, explanation, content_area, model, source_citation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 content,
@@ -237,6 +239,7 @@ class Repository:
                 explanation,
                 content_area,
                 model,
+                citation_json,
             ),
         ) as cursor:
             await self.db.commit()
@@ -254,6 +257,12 @@ class Repository:
             if row:
                 result = dict(row)
                 result["options"] = json.loads(result["options"])
+                # Parse source_citation JSON if present
+                if result.get("source_citation"):
+                    try:
+                        result["source_citation"] = json.loads(result["source_citation"])
+                    except json.JSONDecodeError:
+                        pass
                 return result
             return None
 
@@ -439,17 +448,28 @@ class Repository:
         question_id: int,
         user_answer: str,
         is_correct: bool,
+        response_time_ms: Optional[int] = None,
     ) -> int:
         """Record a user's answer."""
         async with self.db.execute(
             """
-            INSERT INTO user_answers (user_id, question_id, user_answer, is_correct)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO user_answers (user_id, question_id, user_answer, is_correct, response_time_ms)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, question_id, user_answer, is_correct),
+            (user_id, question_id, user_answer, is_correct, response_time_ms),
         ) as cursor:
             await self.db.commit()
-            return cursor.lastrowid
+            answer_id = cursor.lastrowid
+
+        # Update question stats
+        await self.record_question_answer_stats(
+            question_id=question_id,
+            user_answer=user_answer,
+            is_correct=is_correct,
+            response_time_ms=response_time_ms,
+        )
+
+        return answer_id
 
     async def has_user_answered_question(
         self, user_id: int, question_id: int
@@ -979,6 +999,343 @@ class Repository:
         ) as cursor:
             row = await cursor.fetchone()
             return row["count"] if row else 0
+
+    # =========================================================================
+    # Question Stats Operations
+    # =========================================================================
+
+    async def ensure_question_stats(self, question_id: int) -> None:
+        """Ensure a question_stats record exists for the given question."""
+        await self.db.execute(
+            """
+            INSERT OR IGNORE INTO question_stats (question_id)
+            VALUES (?)
+            """,
+            (question_id,),
+        )
+        await self.db.commit()
+
+    async def record_question_answer_stats(
+        self,
+        question_id: int,
+        user_answer: str,
+        is_correct: bool,
+        response_time_ms: Optional[int] = None,
+    ) -> None:
+        """Update question_stats when an answer is recorded."""
+        await self.ensure_question_stats(question_id)
+
+        # Determine which option column to increment
+        answer_upper = user_answer.upper()
+        option_column = None
+        if answer_upper == "A":
+            option_column = "option_a_count"
+        elif answer_upper == "B":
+            option_column = "option_b_count"
+        elif answer_upper == "C":
+            option_column = "option_c_count"
+        elif answer_upper == "D":
+            option_column = "option_d_count"
+        elif answer_upper == "TRUE":
+            option_column = "option_true_count"
+        elif answer_upper == "FALSE":
+            option_column = "option_false_count"
+
+        # Build update query
+        updates = [
+            "times_answered = times_answered + 1",
+            f"correct_count = correct_count + {1 if is_correct else 0}",
+            f"incorrect_count = incorrect_count + {0 if is_correct else 1}",
+            "last_updated = CURRENT_TIMESTAMP",
+        ]
+
+        if option_column:
+            updates.append(f"{option_column} = {option_column} + 1")
+
+        if response_time_ms is not None:
+            updates.append(f"total_response_time_ms = total_response_time_ms + {response_time_ms}")
+
+        query = f"UPDATE question_stats SET {', '.join(updates)} WHERE question_id = ?"
+        await self.db.execute(query, (question_id,))
+        await self.db.commit()
+
+    async def record_question_shown(self, question_id: int) -> None:
+        """Increment times_shown for a question."""
+        await self.ensure_question_stats(question_id)
+        await self.db.execute(
+            """
+            UPDATE question_stats
+            SET times_shown = times_shown + 1, last_updated = CURRENT_TIMESTAMP
+            WHERE question_id = ?
+            """,
+            (question_id,),
+        )
+        await self.db.commit()
+
+    async def get_question_stats(self, question_id: int) -> Optional[dict[str, Any]]:
+        """Get stats for a specific question."""
+        async with self.db.execute(
+            "SELECT * FROM question_stats WHERE question_id = ?",
+            (question_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    # =========================================================================
+    # Question Reports Operations
+    # =========================================================================
+
+    async def create_question_report(
+        self,
+        question_id: int,
+        user_id: int,
+        report_type: str,
+        details: Optional[str] = None,
+    ) -> int:
+        """Create a new question report."""
+        async with self.db.execute(
+            """
+            INSERT INTO question_reports (question_id, user_id, report_type, details)
+            VALUES (?, ?, ?, ?)
+            """,
+            (question_id, user_id, report_type, details),
+        ) as cursor:
+            await self.db.commit()
+            report_id = cursor.lastrowid
+
+        # Update report count in question_stats
+        await self.ensure_question_stats(question_id)
+        await self.db.execute(
+            """
+            UPDATE question_stats
+            SET report_count = report_count + 1, last_updated = CURRENT_TIMESTAMP
+            WHERE question_id = ?
+            """,
+            (question_id,),
+        )
+        await self.db.commit()
+
+        return report_id
+
+    async def get_user_report_count_today(self, user_id: int) -> int:
+        """Get number of reports a user has submitted today."""
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count FROM question_reports
+            WHERE user_id = ? AND DATE(created_at) = DATE('now')
+            """,
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
+
+    async def get_question_reports(
+        self,
+        question_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Get question reports with optional filters."""
+        query = "SELECT * FROM question_reports WHERE 1=1"
+        params: list[Any] = []
+
+        if question_id is not None:
+            query += " AND question_id = ?"
+            params.append(question_id)
+
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        async with self.db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def update_report_status(
+        self,
+        report_id: int,
+        status: str,
+        reviewed_by: Optional[str] = None,
+        reviewer_notes: Optional[str] = None,
+    ) -> bool:
+        """Update report status."""
+        resolved_at = "CURRENT_TIMESTAMP" if status in ("resolved", "dismissed") else "NULL"
+        await self.db.execute(
+            f"""
+            UPDATE question_reports
+            SET status = ?, reviewed_by = ?, reviewer_notes = ?, resolved_at = {resolved_at}
+            WHERE id = ?
+            """,
+            (status, reviewed_by, reviewer_notes, report_id),
+        )
+        await self.db.commit()
+        return True
+
+    # =========================================================================
+    # Question Reviews Operations
+    # =========================================================================
+
+    async def create_question_review(
+        self,
+        question_id: int,
+        reviewer_id: str,
+        decision: str,
+        notes: Optional[str] = None,
+        review_data: Optional[dict[str, Any]] = None,
+        difficulty: Optional[int] = None,
+    ) -> int:
+        """Create an expert review for a question."""
+        review_data_json = json.dumps(review_data) if review_data else None
+
+        async with self.db.execute(
+            """
+            INSERT INTO question_reviews (question_id, reviewer_id, decision, notes, review_data)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (question_id, reviewer_id, decision, notes, review_data_json),
+        ) as cursor:
+            await self.db.commit()
+            review_id = cursor.lastrowid
+
+        # Update question's review_status and difficulty
+        updates = ["review_status = ?"]
+        params: list[Any] = [decision]
+
+        if difficulty is not None:
+            updates.append("difficulty = ?")
+            params.append(difficulty)
+
+        params.append(question_id)
+        await self.db.execute(
+            f"UPDATE questions SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        await self.db.commit()
+
+        return review_id
+
+    async def get_question_reviews(
+        self,
+        question_id: int,
+    ) -> list[dict[str, Any]]:
+        """Get all reviews for a question."""
+        async with self.db.execute(
+            """
+            SELECT * FROM question_reviews
+            WHERE question_id = ?
+            ORDER BY created_at DESC
+            """,
+            (question_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            reviews = []
+            for row in rows:
+                review = dict(row)
+                if review.get("review_data"):
+                    try:
+                        review["review_data"] = json.loads(review["review_data"])
+                    except json.JSONDecodeError:
+                        pass
+                reviews.append(review)
+            return reviews
+
+    async def get_question_with_review_data(
+        self,
+        question_id: int,
+    ) -> Optional[dict[str, Any]]:
+        """Get a question with its stats, reports, and reviews."""
+        question = await self.get_question_by_id(question_id)
+        if not question:
+            return None
+
+        question["stats"] = await self.get_question_stats(question_id)
+        question["reports"] = await self.get_question_reports(question_id=question_id)
+        question["reviews"] = await self.get_question_reviews(question_id)
+
+        return question
+
+    async def get_next_unreviewed_question(
+        self,
+        current_id: Optional[int] = None,
+        content_area: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Get the next unreviewed question for the review queue."""
+        query = """
+            SELECT * FROM questions
+            WHERE (review_status IS NULL OR review_status = 'unreviewed')
+        """
+        params: list[Any] = []
+
+        if current_id is not None:
+            query += " AND id > ?"
+            params.append(current_id)
+
+        if content_area is not None:
+            query += " AND content_area = ?"
+            params.append(content_area)
+
+        query += " ORDER BY id ASC LIMIT 1"
+
+        async with self.db.execute(query, params) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                result = dict(row)
+                result["options"] = json.loads(result["options"])
+                if result.get("source_citation"):
+                    try:
+                        result["source_citation"] = json.loads(result["source_citation"])
+                    except json.JSONDecodeError:
+                        pass
+                return result
+            return None
+
+    async def get_review_queue_count(
+        self,
+        content_area: Optional[str] = None,
+    ) -> dict[str, int]:
+        """Get counts of questions by review status."""
+        query = """
+            SELECT
+                COALESCE(review_status, 'unreviewed') as status,
+                COUNT(*) as count
+            FROM questions
+        """
+        params: list[Any] = []
+
+        if content_area is not None:
+            query += " WHERE content_area = ?"
+            params.append(content_area)
+
+        query += " GROUP BY COALESCE(review_status, 'unreviewed')"
+
+        async with self.db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            return {row["status"]: row["count"] for row in rows}
+
+    async def update_question_review_status(
+        self,
+        question_id: int,
+        review_status: str,
+        difficulty: Optional[int] = None,
+    ) -> bool:
+        """Update question's review_status and optionally difficulty."""
+        updates = ["review_status = ?"]
+        params: list[Any] = [review_status]
+
+        if difficulty is not None:
+            updates.append("difficulty = ?")
+            params.append(difficulty)
+
+        params.append(question_id)
+        await self.db.execute(
+            f"UPDATE questions SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        await self.db.commit()
+        return True
 
     # =========================================================================
     # Admin Web GUI - Generic Table Operations

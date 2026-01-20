@@ -37,11 +37,14 @@ def temp_db_path() -> Generator[str, None, None]:
 @pytest_asyncio.fixture
 async def repository(temp_db_path: str) -> AsyncGenerator:
     """Create a test repository with initialized database."""
-    from src.database.migrations import initialize_database
+    from src.database.migrations import initialize_database, run_migrations
     from src.database.repository import Repository
 
     # Initialize the database schema
     await initialize_database(temp_db_path)
+
+    # Run migrations to add any new columns (e.g., source_citation, review_status)
+    await run_migrations(temp_db_path)
 
     # Create repository
     repo = Repository(temp_db_path)

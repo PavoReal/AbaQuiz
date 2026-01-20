@@ -191,3 +191,153 @@ async def questions_cards(request: web.Request) -> dict:
         "difficulty": difficulty or "",
         **data,
     }
+
+
+# =============================================================================
+# Expert Review Routes
+# =============================================================================
+
+
+@aiohttp_jinja2.template("review.html")
+async def review_page(request: web.Request) -> dict:
+    """Expert review page for grading questions."""
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Get optional content area filter
+    content_area = request.query.get("content_area", "").strip() or None
+    question_id = request.query.get("id", "").strip()
+
+    # Get review queue counts
+    queue_counts = await repo.get_review_queue_count(content_area)
+
+    # Get distinct content areas for filter
+    pool_counts = await repo.get_question_pool_counts()
+    content_areas = sorted(pool_counts.keys())
+
+    # Get initial question
+    question = None
+    if question_id:
+        try:
+            question = await repo.get_question_with_review_data(int(question_id))
+        except ValueError:
+            pass
+    else:
+        # Get next unreviewed question
+        question = await repo.get_next_unreviewed_question(content_area=content_area)
+        if question:
+            question = await repo.get_question_with_review_data(question["id"])
+
+    return {
+        "question": question,
+        "queue_counts": queue_counts,
+        "content_areas": content_areas,
+        "current_area": content_area or "",
+    }
+
+
+@aiohttp_jinja2.template("partials/review_question.html")
+async def review_question_partial(request: web.Request) -> dict:
+    """HTMX partial: load a specific question for review."""
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    question_id = request.query.get("id", "").strip()
+    direction = request.query.get("direction", "").strip()
+    content_area = request.query.get("content_area", "").strip() or None
+
+    question = None
+
+    if question_id:
+        try:
+            qid = int(question_id)
+            if direction == "next":
+                # Get next unreviewed after this ID
+                question = await repo.get_next_unreviewed_question(
+                    current_id=qid, content_area=content_area
+                )
+            elif direction == "prev":
+                # Get previous question (any status)
+                async with repo.db.execute(
+                    """
+                    SELECT * FROM questions
+                    WHERE id < ?
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (qid,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        import json
+                        question = dict(row)
+                        question["options"] = json.loads(question["options"])
+                        if question.get("source_citation"):
+                            try:
+                                question["source_citation"] = json.loads(question["source_citation"])
+                            except:
+                                pass
+            else:
+                question = await repo.get_question_by_id(qid)
+        except ValueError:
+            pass
+    else:
+        # Get next unreviewed
+        question = await repo.get_next_unreviewed_question(content_area=content_area)
+
+    if question:
+        question = await repo.get_question_with_review_data(question["id"])
+
+    return {"question": question}
+
+
+async def submit_review(request: web.Request) -> web.Response:
+    """Handle review form submission."""
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Parse form data
+    data = await request.post()
+    question_id = data.get("question_id")
+    decision = data.get("decision")
+    reviewer_id = data.get("reviewer_id", "").strip() or "anonymous"
+    difficulty = data.get("difficulty", "").strip()
+    notes = data.get("notes", "").strip() or None
+
+    if not question_id or not decision:
+        raise web.HTTPBadRequest(text="Missing question_id or decision")
+
+    try:
+        qid = int(question_id)
+        diff = int(difficulty) if difficulty else None
+    except ValueError:
+        raise web.HTTPBadRequest(text="Invalid question_id or difficulty")
+
+    # Create the review
+    await repo.create_question_review(
+        question_id=qid,
+        reviewer_id=reviewer_id,
+        decision=decision,
+        notes=notes,
+        difficulty=diff,
+    )
+
+    # Return HTMX-compatible redirect or partial reload
+    if request.headers.get("HX-Request"):
+        # Get next unreviewed question
+        content_area = data.get("content_area", "").strip() or None
+        next_question = await repo.get_next_unreviewed_question(
+            current_id=qid, content_area=content_area
+        )
+        if next_question:
+            next_question = await repo.get_question_with_review_data(next_question["id"])
+
+        # Return the next question partial
+        response = aiohttp_jinja2.render_template(
+            "partials/review_question.html",
+            request,
+            {"question": next_question},
+        )
+        return response
+    else:
+        # Regular redirect
+        raise web.HTTPFound("/review")

@@ -96,7 +96,16 @@ class Settings:
         self.pool_dedup_model = pool_config.get(
             "dedup_model", "claude-haiku-4-5"
         )
-        self.pool_dedup_check_limit = pool_config.get("dedup_check_limit", 50)
+        self.pool_dedup_check_limit = pool_config.get("dedup_check_limit", 30)
+        self.pool_dedup_confidence_threshold = pool_config.get(
+            "dedup_confidence_threshold", "high"
+        )
+        self.pool_dedup_early_exit_batches = pool_config.get(
+            "dedup_early_exit_batches", 3
+        )
+        self.pool_generation_batch_size = pool_config.get(
+            "generation_batch_size", 5
+        )
         self.pool_bcba_weights: dict[str, float] = pool_config.get(
             "bcba_weights", {}
         )

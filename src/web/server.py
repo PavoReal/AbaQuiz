@@ -49,6 +49,9 @@ def setup_routes(app: web.Application) -> None:
         record_detail,
         questions_list,
         questions_cards,
+        review_page,
+        review_question_partial,
+        submit_review,
     )
 
     app.router.add_get("/", index)
@@ -58,3 +61,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_get("/tables/{name}/{id}", record_detail)
     app.router.add_get("/questions", questions_list)
     app.router.add_get("/questions/cards", questions_cards)  # HTMX partial
+    # Review routes
+    app.router.add_get("/review", review_page)
+    app.router.add_get("/review/question", review_question_partial)  # HTMX partial
+    app.router.add_post("/review/submit", submit_review)

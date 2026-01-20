@@ -116,6 +116,59 @@ CREATE TABLE IF NOT EXISTS sent_questions (
 )
 """
 
+# Question reports table - user reports about problematic questions
+CREATE_QUESTION_REPORTS_TABLE = """
+CREATE TABLE IF NOT EXISTS question_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    report_type TEXT NOT NULL,  -- 'incorrect_answer', 'confusing_wording', 'outdated_content', 'other'
+    details TEXT,
+    status TEXT DEFAULT 'pending',  -- 'pending', 'reviewed', 'resolved', 'dismissed'
+    reviewed_by TEXT,
+    reviewer_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP,
+    FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)
+"""
+
+# Aggregate stats per question
+CREATE_QUESTION_STATS_TABLE = """
+CREATE TABLE IF NOT EXISTS question_stats (
+    question_id INTEGER PRIMARY KEY,
+    times_shown INTEGER DEFAULT 0,
+    times_answered INTEGER DEFAULT 0,
+    correct_count INTEGER DEFAULT 0,
+    incorrect_count INTEGER DEFAULT 0,
+    total_response_time_ms INTEGER DEFAULT 0,
+    option_a_count INTEGER DEFAULT 0,
+    option_b_count INTEGER DEFAULT 0,
+    option_c_count INTEGER DEFAULT 0,
+    option_d_count INTEGER DEFAULT 0,
+    option_true_count INTEGER DEFAULT 0,
+    option_false_count INTEGER DEFAULT 0,
+    report_count INTEGER DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+)
+"""
+
+# Expert review decisions
+CREATE_QUESTION_REVIEWS_TABLE = """
+CREATE TABLE IF NOT EXISTS question_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id INTEGER NOT NULL,
+    reviewer_id TEXT NOT NULL,
+    decision TEXT NOT NULL,  -- 'approved', 'rejected', 'needs_edit'
+    notes TEXT,
+    review_data TEXT,  -- JSON for structured feedback
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+)
+"""
+
 # Indexes for performance
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
@@ -128,6 +181,10 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage(timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_sent_questions_user_id ON sent_questions(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_sent_questions_question_id ON sent_questions(question_id)",
+    "CREATE INDEX IF NOT EXISTS idx_question_reports_question_id ON question_reports(question_id)",
+    "CREATE INDEX IF NOT EXISTS idx_question_reports_user_id ON question_reports(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_question_reports_status ON question_reports(status)",
+    "CREATE INDEX IF NOT EXISTS idx_question_reviews_question_id ON question_reviews(question_id)",
 ]
 
 # All table creation statements in order
@@ -141,4 +198,7 @@ ALL_TABLES = [
     CREATE_ADMIN_SETTINGS_TABLE,
     CREATE_API_USAGE_TABLE,
     CREATE_SENT_QUESTIONS_TABLE,
+    CREATE_QUESTION_REPORTS_TABLE,
+    CREATE_QUESTION_STATS_TABLE,
+    CREATE_QUESTION_REVIEWS_TABLE,
 ]

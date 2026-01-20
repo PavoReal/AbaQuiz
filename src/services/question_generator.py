@@ -2,8 +2,10 @@
 Question generation service using Claude API.
 
 Generates BCBA exam questions from pre-processed content.
+Uses AsyncAnthropic client with structured outputs for reliable JSON responses.
 """
 
+import asyncio
 import json
 import random
 from enum import Enum
@@ -11,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import anthropic
-from anthropic import transform_schema
+from anthropic import AsyncAnthropic, transform_schema
 from pydantic import BaseModel, Field
 
 from src.config.constants import ContentArea, QuestionType
@@ -41,6 +43,23 @@ class QuestionOptions(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class SourceCitation(BaseModel):
+    """Citation from source material for question verification."""
+
+    section: Optional[str] = Field(
+        None,
+        description="Document section or task list item (e.g., 'Task List F-1', 'Ethics Code 2.09')"
+    )
+    heading: Optional[str] = Field(
+        None,
+        description="Section heading or topic name"
+    )
+    quote: Optional[str] = Field(
+        None,
+        description="Brief relevant quote from source (max 50 words)"
+    )
+
+
 class GeneratedQuestion(BaseModel):
     """A single generated quiz question."""
 
@@ -53,7 +72,15 @@ class GeneratedQuestion(BaseModel):
         description="The correct answer key only (A, B, C, D for multiple choice, or True/False for true/false)"
     )
     explanation: str = Field(
-        description="Why the answer is correct and others wrong"
+        description="Why the answer is correct and why each incorrect option is wrong"
+    )
+    category: Optional[str] = Field(
+        None,
+        description="Question category: scenario, definition, or application"
+    )
+    source_citation: Optional[SourceCitation] = Field(
+        None,
+        description="Citation from the study content that supports this question"
     )
 
 
@@ -80,59 +107,86 @@ CATEGORY_WEIGHTS: dict[QuestionCategory, float] = {
     QuestionCategory.APPLICATION: 0.3,
 }
 
-# System prompt for question generation
-SYSTEM_PROMPT = """You are an expert BCBA (Board Certified Behavior Analyst) exam question writer. Your task is to create high-quality practice questions based on the BCBA 5th Edition Task List content provided.
+# System prompt for question generation - Claude 4.x optimized
+SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating practice questions for the BCBA 5th Edition certification exam.
 
-Core Guidelines:
-1. All options should be plausible to someone who hasn't mastered the content
-2. Avoid "all of the above" or "none of the above" options
-3. The explanation should teach the concept and explain why the correct answer is right AND why other options are wrong
-4. Match the difficulty and style of actual BCBA certification exam questions
-5. Reference specific ethics codes, task list items, or principles where relevant
-6. Use diverse names, settings, and demographics in scenarios
-7. Vary complexity - some questions should require multi-step reasoning
+<guidelines>
+- Create plausible distractors that would challenge someone who hasn't mastered the content
+- Never use "all of the above" or "none of the above" options
+- Reference specific ethics codes, task list items, or principles where relevant
+- Use diverse names, settings, and demographics in scenarios
+- Vary complexity - include questions requiring multi-step reasoning
+- Match the difficulty and style of actual BCBA certification exam questions
+</guidelines>
 
-You MUST respond with valid JSON matching this exact schema:
-{
-  "question": "The question text here",
-  "type": "multiple_choice",
-  "options": {
-    "A": "First option",
-    "B": "Second option",
-    "C": "Third option",
-    "D": "Fourth option"
-  },
-  "correct_answer": "B",
-  "explanation": "Detailed explanation of why B is correct and why other options are incorrect."
-}
+<explanation_format>
+Each explanation should:
+1. State why the correct answer is right with specific reasoning
+2. Address each incorrect option individually, explaining the specific misconception it represents
+3. Connect to relevant BCBA task list items or ethics codes when applicable
+</explanation_format>
 
-For true/false questions, use this schema:
-{
-  "question": "The statement to evaluate as true or false",
-  "type": "true_false",
-  "options": {
-    "True": "True",
-    "False": "False"
-  },
-  "correct_answer": "True",
-  "explanation": "Explanation of why the statement is true/false."
-}"""
+<citation_requirement>
+For each question, provide a source_citation from the study content:
+- section: The task list item or document section (e.g., "Task List F-1", "Ethics Code 2.09")
+- heading: The topic or heading name
+- quote: A brief relevant quote (max 50 words) that supports the question
+</citation_requirement>
 
-# System prompt for batch question generation (no JSON formatting needed - schema handles it)
-BATCH_SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating practice questions based on the BCBA 5th Edition Task List.
+<example>
+Question: A BCBA notices that a client's aggressive behavior increases immediately after demands are placed and results in the removal of task materials. Based on this pattern, the behavior analyst should FIRST:
 
-Guidelines:
-1. All options should be plausible to someone who hasn't mastered the content
-2. Avoid "all of the above" or "none of the above" options
-3. Explanations should teach the concept and explain why correct/incorrect
-4. Match BCBA certification exam difficulty and style
-5. Reference specific ethics codes, task list items where relevant
-6. Use diverse names, settings, demographics in scenarios
+Options:
+A: Implement a DRA procedure targeting compliance
+B: Conduct a functional behavior assessment
+C: Apply an extinction procedure by not removing materials
+D: Consult with the client's physician about medication
 
-Requirements for variety in each batch:
-- Mix categories: ~40% scenario-based, ~30% definition, ~30% application
-- Each question must test a DIFFERENT concept
-- Vary difficulty levels"""
+Correct Answer: B
+
+Explanation: A functional behavior assessment (FBA) should be conducted first to systematically identify the function of the behavior before selecting an intervention (Task List item F-1). While the pattern suggests escape-maintained behavior, a proper FBA will confirm this hypothesis and rule out other maintaining variables. Option A (DRA) and Option C (extinction) are intervention procedures that should only be implemented after the function is confirmed through formal assessment. Option D (physician consultation) may be appropriate for ruling out medical causes but is not the first step when the behavior appears to have a clear environmental antecedent-behavior-consequence pattern.
+
+Source Citation:
+- section: Task List F-1
+- heading: Review records and available data at the outset of the case
+- quote: "Behavior analysts conduct assessments...before selecting and implementing interventions"
+</example>"""
+
+# System prompt for batch question generation
+BATCH_SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating practice questions for the BCBA 5th Edition certification exam.
+
+<guidelines>
+- Create plausible distractors that would challenge someone who hasn't mastered the content
+- Never use "all of the above" or "none of the above" options
+- Explanations should teach the concept: state why the correct answer is right AND address why each incorrect option is wrong
+- Match BCBA certification exam difficulty and style
+- Reference specific ethics codes and task list items where relevant
+- Use diverse names, settings, and demographics in scenarios
+</guidelines>
+
+<variety_requirements>
+For each batch, ensure:
+- Approximately 40% scenario-based clinical vignettes
+- Approximately 30% definition/concept questions
+- Approximately 30% application questions
+- Each question tests a DIFFERENT concept within the content area
+- Mix of difficulty levels (some straightforward, some requiring multi-step reasoning)
+- Include the category field for each question (scenario, definition, or application)
+</variety_requirements>
+
+<explanation_format>
+Each explanation should:
+1. State why the correct answer is right with specific reasoning
+2. Address each incorrect option individually
+3. Reference relevant BCBA task list items when applicable
+</explanation_format>
+
+<citation_requirement>
+For each question, provide a source_citation from the study content:
+- section: The task list item or document section (e.g., "Task List F-1", "Ethics Code 2.09")
+- heading: The topic or heading name
+- quote: A brief relevant quote (max 50 words) that supports the question
+</citation_requirement>"""
 
 # Category-specific instructions
 CATEGORY_INSTRUCTIONS: dict[QuestionCategory, str] = {
@@ -158,89 +212,128 @@ CATEGORY_INSTRUCTIONS: dict[QuestionCategory, str] = {
 
 # Content-area specific guidance
 CONTENT_AREA_GUIDANCE: dict[ContentArea, str] = {
-    ContentArea.ETHICS: """Ethics focus areas:
-- BACB Ethics Code sections and applications
+    ContentArea.ETHICS: """<content_area_focus>
+Ethics - Key topics to assess:
+- BACB Ethics Code sections and real-world applications
 - Multiple relationships and conflicts of interest
-- Informed consent and assent
-- Confidentiality boundaries
-- Supervisory responsibilities
-- Professional conduct in various settings""",
-    ContentArea.BEHAVIOR_ASSESSMENT: """Behavior Assessment focus areas:
-- Functional behavior assessment (FBA) methods
-- Indirect vs. direct assessment
-- Identifying functions of behavior
-- Baseline data collection
-- Assessment tool selection
-- Interpreting assessment results""",
-    ContentArea.BEHAVIOR_CHANGE_PROCEDURES: """Behavior-Change Procedures focus areas:
-- Reinforcement and punishment procedures
-- Extinction and its effects
-- Differential reinforcement (DRA, DRI, DRO, DRL)
-- Shaping, chaining, prompting
+- Informed consent and assent procedures
+- Confidentiality boundaries and exceptions
+- Supervisory responsibilities and requirements
+- Professional conduct across various settings
+- Reporting obligations and ethical decision-making
+</content_area_focus>""",
+    ContentArea.BEHAVIOR_ASSESSMENT: """<content_area_focus>
+Behavior Assessment - Key topics to assess:
+- Functional behavior assessment (FBA) methods and procedures
+- Indirect vs. direct assessment comparison
+- Identifying functions of behavior (attention, escape, tangible, automatic)
+- Baseline data collection methods
+- Assessment tool selection criteria
+- Interpreting assessment results and forming hypotheses
+- Preference assessments and stimulus preference hierarchies
+</content_area_focus>""",
+    ContentArea.BEHAVIOR_CHANGE_PROCEDURES: """<content_area_focus>
+Behavior-Change Procedures - Key topics to assess:
+- Reinforcement and punishment procedures (positive/negative)
+- Extinction and its side effects
+- Differential reinforcement (DRA, DRI, DRO, DRL, DRH)
+- Shaping, chaining (forward/backward/total task), prompting
 - Token economies and group contingencies
-- Generalization and maintenance""",
-    ContentArea.CONCEPTS_AND_PRINCIPLES: """Concepts and Principles focus areas:
+- Generalization and maintenance programming
+- Stimulus control transfer procedures
+</content_area_focus>""",
+    ContentArea.CONCEPTS_AND_PRINCIPLES: """<content_area_focus>
+Concepts and Principles - Key topics to assess:
 - Operant and respondent conditioning
-- Stimulus control and discrimination
-- Motivating operations (MOs)
-- Verbal behavior (mand, tact, intraverbal, etc.)
+- Stimulus control, discrimination, and generalization
+- Motivating operations (EOs and AOs)
+- Verbal behavior (mand, tact, echoic, intraverbal, textual, transcription)
 - Rule-governed vs. contingency-shaped behavior
-- Behavioral momentum and matching law""",
-    ContentArea.MEASUREMENT: """Measurement focus areas:
-- Data collection methods (frequency, duration, latency, IRT)
-- IOA calculation methods
-- Visual analysis of graphs
-- Variability, trend, and level
+- Behavioral momentum and matching law
+- Schedules of reinforcement and their effects
+</content_area_focus>""",
+    ContentArea.MEASUREMENT: """<content_area_focus>
+Measurement, Data Display, and Interpretation - Key topics to assess:
+- Data collection methods (frequency, rate, duration, latency, IRT)
+- IOA calculation methods (total, interval, exact agreement)
+- Visual analysis of graphs (level, trend, variability)
 - Continuous vs. discontinuous measurement
-- Validity and reliability of measures""",
-    ContentArea.EXPERIMENTAL_DESIGN: """Experimental Design focus areas:
-- Single-subject designs (reversal, multiple baseline, alternating treatment)
+- Validity and reliability of behavioral measures
+- Graphing conventions and data display
+- Calculating and interpreting percentage and rate data
+</content_area_focus>""",
+    ContentArea.EXPERIMENTAL_DESIGN: """<content_area_focus>
+Experimental Design - Key topics to assess:
+- Single-subject designs (reversal/ABAB, multiple baseline, alternating treatment, changing criterion)
 - Internal and external validity threats
-- Baseline logic and steady state
-- Replication types
+- Baseline logic and steady state criteria
+- Replication types (direct, systematic)
 - When to use each design type
-- Interpreting design results""",
-    ContentArea.INTERVENTIONS: """Interventions focus areas:
-- Evidence-based practice selection
+- Interpreting design results and drawing conclusions
+- Component and parametric analyses
+</content_area_focus>""",
+    ContentArea.INTERVENTIONS: """<content_area_focus>
+Selecting and Implementing Interventions - Key topics to assess:
+- Evidence-based practice selection criteria
 - Intervention planning and goal setting
-- Treatment integrity monitoring
+- Treatment integrity/fidelity monitoring
 - Social validity considerations
-- Crisis/emergency protocols
-- Transition and discharge planning""",
-    ContentArea.SUPERVISION: """Supervision focus areas:
+- Crisis and emergency protocols
+- Transition and discharge planning
+- Least restrictive intervention selection
+</content_area_focus>""",
+    ContentArea.SUPERVISION: """<content_area_focus>
+Personnel Supervision and Management - Key topics to assess:
 - RBT and trainee supervision requirements
-- Feedback delivery methods
+- Feedback delivery methods (immediate, delayed, written, verbal)
 - Performance monitoring and evaluation
 - Training and competency assessment
-- Supervision documentation
-- Ethical supervision practices""",
-    ContentArea.PHILOSOPHICAL_UNDERPINNINGS: """Philosophical Underpinnings focus areas:
+- Supervision documentation requirements
+- Ethical supervision practices
+- Effective supervision structures and scheduling
+</content_area_focus>""",
+    ContentArea.PHILOSOPHICAL_UNDERPINNINGS: """<content_area_focus>
+Philosophical Underpinnings - Key topics to assess:
 - Radical behaviorism principles
 - Determinism and selectionism
 - Parsimony in explanation
 - Pragmatism and scientific attitudes
 - Public vs. private events
-- Mentalism vs. behaviorism""",
+- Mentalism vs. behaviorism distinction
+- Dimensions of applied behavior analysis
+</content_area_focus>""",
 }
 
 
 class QuestionGenerator:
-    """Generates quiz questions using Claude API."""
+    """Generates quiz questions using Claude API with async support."""
+
+    # Retry configuration
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [1, 3, 10]  # Seconds between retries
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
-        # Use absolute path from project root (not relative to working directory)
+        # Use AsyncAnthropic for non-blocking API calls
+        self.client = AsyncAnthropic(api_key=self.settings.anthropic_api_key)
+        # Use absolute path from project root
         self.processed_content_dir = Path(__file__).parent.parent.parent / "data" / "processed"
+        # Content cache to avoid repeated file reads
+        self._content_cache: dict[ContentArea, str] = {}
 
     def _load_content_for_area(self, content_area: ContentArea) -> str:
         """Load pre-processed markdown content for a content area.
 
+        Uses caching to avoid repeated file reads for batch operations.
+
         Raises:
             FileNotFoundError: If no content files exist for the area.
         """
+        # Check cache first
+        if content_area in self._content_cache:
+            return self._content_cache[content_area]
+
         # Map content areas to file paths
-        # Core materials (task_list, handbook, tco) contain content spanning multiple areas
         area_files = {
             ContentArea.PHILOSOPHICAL_UNDERPINNINGS: [
                 "core/task_list.md",
@@ -286,8 +379,8 @@ class QuestionGenerator:
         for file_path in area_files.get(content_area, []):
             full_path = self.processed_content_dir / file_path
             if full_path.exists():
-                content = full_path.read_text()
-                if content.strip():  # Check not empty
+                content = full_path.read_text(encoding="utf-8")
+                if content.strip():
                     content_parts.append(content)
                 else:
                     logger.warning(f"Empty content file: {full_path}")
@@ -306,7 +399,15 @@ class QuestionGenerator:
                 f"Run preprocessing first: python -m src.preprocessing.run_preprocessing"
             )
 
-        return "\n\n---\n\n".join(content_parts)
+        content = "\n\n---\n\n".join(content_parts)
+        # Cache the loaded content
+        self._content_cache[content_area] = content
+        return content
+
+    def clear_content_cache(self) -> None:
+        """Clear the content cache. Useful after content updates."""
+        self._content_cache.clear()
+        logger.debug("Content cache cleared")
 
     def _select_category(self) -> QuestionCategory:
         """Select a question category based on distribution weights."""
@@ -318,6 +419,59 @@ class QuestionGenerator:
                 return category
         return QuestionCategory.SCENARIO  # Default fallback
 
+    async def _call_api_with_retry(
+        self,
+        create_func,
+        **kwargs,
+    ) -> Any:
+        """Call API with retry logic for transient failures.
+
+        Args:
+            create_func: The async API function to call
+            **kwargs: Arguments to pass to the API function
+
+        Returns:
+            API response
+
+        Raises:
+            anthropic.APIError: If all retries fail
+        """
+        last_error = None
+
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                return await create_func(**kwargs)
+            except anthropic.RateLimitError as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
+                    )
+                    await asyncio.sleep(delay)
+            except anthropic.APIConnectionError as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"Connection error, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
+                    )
+                    await asyncio.sleep(delay)
+            except anthropic.APIStatusError as e:
+                # Don't retry on 4xx errors (except rate limit)
+                if 400 <= e.status_code < 500 and e.status_code != 429:
+                    raise
+                last_error = e
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"API error {e.status_code}, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
+                    )
+                    await asyncio.sleep(delay)
+
+        # All retries exhausted
+        raise last_error  # type: ignore
+
     async def generate_question(
         self,
         content_area: ContentArea,
@@ -325,7 +479,7 @@ class QuestionGenerator:
         question_category: Optional[QuestionCategory] = None,
     ) -> Optional[dict[str, Any]]:
         """
-        Generate a single question for a content area.
+        Generate a single question for a content area using structured outputs.
 
         Args:
             content_area: The BCBA content area
@@ -357,7 +511,7 @@ class QuestionGenerator:
 
         # Build user prompt with category and content-area specific guidance
         type_instruction = (
-            "Create a multiple choice question with 4 options (A, B, C, D)."
+            "Create a multiple choice question with exactly 4 options (A, B, C, D)."
             if question_type == QuestionType.MULTIPLE_CHOICE
             else "Create a true/false question."
         )
@@ -370,94 +524,68 @@ class QuestionGenerator:
 
         user_prompt = f"""Based on the following BCBA study content about {content_area.value}, {type_instruction}
 
-QUESTION STYLE:
+<question_style>
 {category_instruction}
+</question_style>
 
 {area_guidance}
 
-CONTENT:
-{content if content else f"[Content for {content_area.value} - use your knowledge of BCBA exam topics]"}
+<study_content>
+{content}
+</study_content>
 
-Generate a challenging but fair exam-style question that matches the requested style. Respond with JSON only."""
+Generate a challenging but fair exam-style question that matches the requested style. Set the category field to "{question_category.value}".
+
+Include a source_citation with the specific section, heading, and a brief quote from the study content that this question is based on."""
 
         try:
-            response = self.client.messages.create(
+            # Use structured outputs for guaranteed valid JSON
+            response = await self._call_api_with_retry(
+                self.client.beta.messages.create,
                 model=self.settings.claude_model,
                 max_tokens=1024,
+                betas=["structured-outputs-2025-11-13"],
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
+                output_format={
+                    "type": "json_schema",
+                    "schema": transform_schema(GeneratedQuestion),
+                },
             )
 
-            # Parse response - handle different content block types
+            # Parse guaranteed-valid JSON response
             content_block = response.content[0]
             if not hasattr(content_block, "text"):
                 logger.error("Response has no text content")
                 return None
-            response_text = content_block.text
 
-            # Try to extract JSON from response
-            question_data = self._parse_question_json(response_text)
+            question_data = json.loads(content_block.text)
 
-            if question_data:
-                # Add content area, category, and model
-                question_data["content_area"] = content_area.value
-                question_data["category"] = question_category.value
-                question_data["model"] = self.settings.claude_model
+            # Normalize options - filter out None values
+            raw_opts = question_data.get("options", {})
+            normalized_opts = {k: v for k, v in raw_opts.items() if v is not None}
+            question_data["options"] = normalized_opts
 
-                # Log usage
-                logger.info(
-                    f"Generated {question_category.value} question for {content_area.value}: "
-                    f"{response.usage.input_tokens} in, {response.usage.output_tokens} out"
-                )
+            # Add metadata
+            question_data["content_area"] = content_area.value
+            question_data["category"] = question_category.value
+            question_data["model"] = self.settings.claude_model
 
-                return question_data
+            # Log usage
+            logger.info(
+                f"Generated {question_category.value} question for {content_area.value}: "
+                f"{response.usage.input_tokens} in, {response.usage.output_tokens} out"
+            )
+
+            return question_data
 
         except anthropic.APIError as e:
             logger.error(f"Claude API error: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error (unexpected with structured outputs): {e}")
         except Exception as e:
             logger.error(f"Question generation error: {e}")
 
-        return None
-
-    def _parse_question_json(self, text: str) -> Optional[dict[str, Any]]:
-        """Parse question JSON from response text with better error handling."""
-        import re
-
-        # Strip markdown code blocks if present
-        text = text.strip()
-        if text.startswith("```"):
-            # Remove ```json or ``` prefix and trailing ```
-            lines = text.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines)
-
-        # Try direct parse first
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            logger.debug(f"Direct JSON parse failed: {e}")
-
-        # Try to find JSON object in response - match outermost braces
-        # Use a non-greedy match that handles nested braces
-        json_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-
-        # Last resort: try to find any JSON-like structure
-        json_match = re.search(r"\{[\s\S]*\}", text)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-
-        logger.error(f"Failed to parse question JSON from: {text[:200]}...")
         return None
 
     async def generate_batch(
@@ -467,6 +595,9 @@ Generate a challenging but fair exam-style question that matches the requested s
     ) -> list[dict[str, Any]]:
         """
         Generate a batch of questions for a content area (legacy - one at a time).
+
+        This method generates questions individually, which is less efficient
+        than generate_question_batch() but provides more control over each question.
 
         Args:
             content_area: The BCBA content area
@@ -516,20 +647,36 @@ Generate a challenging but fair exam-style question that matches the requested s
 
         area_guidance = CONTENT_AREA_GUIDANCE.get(content_area, "")
 
+        # Calculate category distribution for this batch
+        scenario_count = round(count * 0.4)
+        definition_count = round(count * 0.3)
+        application_count = count - scenario_count - definition_count
+
         user_prompt = f"""Generate exactly {count} BCBA exam questions about {content_area.value}.
 
-CONTENT AREA GUIDANCE:
 {area_guidance}
 
-STUDY CONTENT:
-{content if content else f"Use your knowledge of {content_area.value} from the BCBA Task List."}
+<distribution_requirements>
+Generate this specific mix of question types:
+- {scenario_count} scenario-based questions (clinical vignettes) - set category to "scenario"
+- {definition_count} definition/concept questions - set category to "definition"
+- {application_count} application questions - set category to "application"
+
+Approximately {round(count * 0.8)} should be multiple choice, {count - round(count * 0.8)} should be true/false.
+</distribution_requirements>
+
+<study_content>
+{content}
+</study_content>
 
 Generate {count} diverse questions testing different concepts within this area.
-Include a mix of multiple choice and true/false questions (approximately 80% MC, 20% TF)."""
+
+For each question, include a source_citation with the specific section, heading, and a brief quote from the study content that the question is based on."""
 
         try:
             # Use structured outputs beta - guarantees valid JSON matching schema
-            response = self.client.beta.messages.create(
+            response = await self._call_api_with_retry(
+                self.client.beta.messages.create,
                 model=self.settings.claude_model,
                 max_tokens=4096,
                 betas=["structured-outputs-2025-11-13"],
@@ -552,18 +699,18 @@ Include a mix of multiple choice and true/false questions (approximately 80% MC,
 
             # Normalize each question
             for q in questions:
-                # Convert options from structured format to simple dict
-                # Filter out None values and use original key names
+                # Filter out None values in options
                 raw_opts = q.get("options", {})
-                normalized_opts = {}
-                for key, val in raw_opts.items():
-                    if val is not None:
-                        normalized_opts[key] = val
+                normalized_opts = {k: v for k, v in raw_opts.items() if v is not None}
                 q["options"] = normalized_opts
 
-                # Add content area and model
+                # Add content area and model metadata
                 q["content_area"] = content_area.value
                 q["model"] = self.settings.claude_model
+
+                # Ensure category is set (default to scenario if missing)
+                if not q.get("category"):
+                    q["category"] = "scenario"
 
             logger.info(
                 f"Generated {len(questions)} questions for {content_area.value}: "
@@ -574,6 +721,8 @@ Include a mix of multiple choice and true/false questions (approximately 80% MC,
 
         except anthropic.APIError as e:
             logger.error(f"Claude API error in batch generation: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error in batch generation: {e}")
         except Exception as e:
             logger.error(f"Batch question generation error: {e}")
 

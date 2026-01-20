@@ -5,6 +5,7 @@ Handles all user interactions with the bot.
 """
 
 import json
+import time
 from datetime import date
 from typing import Optional
 
@@ -380,6 +381,14 @@ async def send_question_to_user(
             is_scheduled=is_scheduled,
         )
 
+        # Track question shown for stats
+        await repo.record_question_shown(question["id"])
+
+        # Store sent time for response time tracking
+        if "question_sent_times" not in context.bot_data:
+            context.bot_data["question_sent_times"] = {}
+        context.bot_data["question_sent_times"][f"{user_id}:{question['id']}"] = time.time()
+
         # Increment daily count for non-scheduled questions
         if not is_scheduled:
             await repo.update_user(
@@ -501,12 +510,22 @@ async def answer_callback(
     # Check answer
     is_correct = user_answer.upper() == question["correct_answer"].upper()
 
+    # Calculate response time
+    response_time_ms = None
+    sent_times = context.bot_data.get("question_sent_times", {})
+    time_key = f"{user.id}:{question_id}"
+    if time_key in sent_times:
+        response_time_ms = int((time.time() - sent_times[time_key]) * 1000)
+        # Clean up the stored time
+        del sent_times[time_key]
+
     # Record answer
     await repo.record_answer(
         user_id=internal_user_id,
         question_id=question_id,
         user_answer=user_answer,
         is_correct=is_correct,
+        response_time_ms=response_time_ms,
     )
 
     # Update streak
@@ -565,6 +584,159 @@ async def answer_callback(
         user.id,
         f"Answer Q{question_id}: {user_answer} ({'✓' if is_correct else '✗'})",
     )
+
+    # Send report button as a separate message after a short delay
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="Was there an issue with this question?",
+            reply_markup=keyboards.build_report_button(question_id),
+        )
+    except Exception as e:
+        logger.debug(f"Could not send report button: {e}")
+
+
+# =============================================================================
+# Report Handlers
+# =============================================================================
+
+MAX_REPORTS_PER_DAY = 3
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def report_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle report button click - show report type options."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    user = update.effective_user
+    data = query.data or ""
+
+    if not data.startswith("report:"):
+        return
+
+    await query.answer()
+
+    # Parse question ID
+    try:
+        question_id = int(data.split(":")[1])
+    except (IndexError, ValueError):
+        await query.edit_message_text("Invalid report data")
+        return
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Get user
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await query.edit_message_text("Please use /start first")
+        return
+
+    # Check daily limit
+    report_count = await repo.get_user_report_count_today(db_user["id"])
+    if report_count >= MAX_REPORTS_PER_DAY:
+        await query.edit_message_text(
+            f"You've reached the daily limit of {MAX_REPORTS_PER_DAY} reports. "
+            "Please try again tomorrow."
+        )
+        return
+
+    # Show report type options
+    await query.edit_message_text(
+        "What type of issue did you notice?",
+        reply_markup=keyboards.build_report_type_keyboard(question_id),
+    )
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def report_submit_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle report type selection - submit the report."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    user = update.effective_user
+    data = query.data or ""
+
+    if not data.startswith("report_submit:"):
+        return
+
+    await query.answer()
+
+    # Parse question ID and report type
+    parts = data.split(":")
+    if len(parts) != 3:
+        await query.edit_message_text("Invalid report data")
+        return
+
+    try:
+        question_id = int(parts[1])
+        report_type = parts[2]
+    except (ValueError, IndexError):
+        await query.edit_message_text("Invalid report data")
+        return
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Get user
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await query.edit_message_text("Please use /start first")
+        return
+
+    # Create the report
+    await repo.create_question_report(
+        question_id=question_id,
+        user_id=db_user["id"],
+        report_type=report_type,
+    )
+
+    # Show confirmation
+    report_labels = {
+        "incorrect_answer": "incorrect answer",
+        "confusing_wording": "confusing wording",
+        "outdated_content": "outdated content",
+        "other": "other issue",
+    }
+    label = report_labels.get(report_type, report_type)
+
+    await query.edit_message_text(
+        f"Thank you for reporting this issue ({label}). "
+        "Our team will review it."
+    )
+
+    log_user_action(logger, user.id, f"Report Q{question_id}: {report_type}")
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def report_cancel_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle report cancel button."""
+    if not update.callback_query:
+        return
+
+    query = update.callback_query
+    await query.answer()
+
+    # Just delete the message
+    try:
+        await query.delete_message()
+    except Exception:
+        await query.edit_message_text("Report cancelled.")
 
 
 async def check_achievements(
