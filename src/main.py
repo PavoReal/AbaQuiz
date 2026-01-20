@@ -14,7 +14,7 @@ import signal
 
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
-from src.database.migrations import initialize_database
+from src.database.migrations import initialize_database, run_migrations
 from src.database.repository import close_repository
 from src.services.content_validator import validate_content_on_startup
 
@@ -156,6 +156,7 @@ async def run_web_only() -> None:
 
     # Initialize database
     await initialize_database(settings.database_path)
+    await run_migrations(settings.database_path)
     logger.info("Database initialized")
 
     # Validate content files (warn on missing, don't fail)
@@ -302,6 +303,7 @@ async def run_bot() -> None:
 
     # Initialize database
     await initialize_database(settings.database_path)
+    await run_migrations(settings.database_path)
     logger.info("Database initialized")
 
     # Validate content files (warn on missing, don't fail)

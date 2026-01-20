@@ -257,7 +257,7 @@ async def _run_generation(
     distribution: dict[str, int],
     skip_dedup: bool,
 ) -> None:
-    """Background task to run question generation."""
+    """Background task to run question generation in parallel."""
     settings = get_settings()
     repo = await get_repository(settings.database_path)
     pool_manager = get_pool_manager()
@@ -271,74 +271,104 @@ async def _run_generation(
         """Check if cancellation was requested."""
         return _generation_state["cancel_requested"]
 
-    try:
-        for area_name, target_count in distribution.items():
-            if is_cancelled():
+    async def generate_single_area(area_name: str, target_count: int) -> dict[str, Any]:
+        """Generate questions for a single content area."""
+        result = {
+            "area_name": area_name,
+            "generated": 0,
+            "duplicates": 0,
+            "cost": 0.0,
+            "error": None,
+        }
+
+        if target_count <= 0:
+            return result
+
+        try:
+            area = ContentArea(area_name)
+        except ValueError:
+            result["error"] = f"Invalid content area: {area_name}"
+            return result
+
+        # Update progress to show we're working on this area
+        for area_info in progress["areas"]:
+            if area_info["name"] == area_name:
+                area_info["status"] = "generating"
                 break
 
-            if target_count <= 0:
-                continue
+        try:
+            if skip_dedup:
+                questions = await pool_manager.generate_without_dedup(area, target_count)
+                dedup_cost = 0
+            else:
+                questions = await pool_manager.generate_with_dedup(area, target_count)
+                # Estimate dedup cost (5 checks per question on average)
+                dedup_cost = len(questions) * 5 * COST_PER_DEDUP
 
-            try:
-                area = ContentArea(area_name)
-            except ValueError:
-                progress["errors"] += 1
-                continue
-
-            # Update progress to show we're working on this area
-            for area_info in progress["areas"]:
-                if area_info["name"] == area_name:
-                    area_info["status"] = "generating"
+            # Store questions
+            stored_count = 0
+            for q in questions:
+                if is_cancelled():
                     break
 
-            try:
-                if skip_dedup:
-                    questions = await pool_manager.generate_without_dedup(area, target_count)
-                    dedup_cost = 0
-                else:
-                    questions = await pool_manager.generate_with_dedup(area, target_count)
-                    # Estimate dedup cost (5 checks per question on average)
-                    dedup_cost = len(questions) * 5 * COST_PER_DEDUP
+                await repo.create_question(
+                    content=q["question"],
+                    question_type=q.get("type", "multiple_choice"),
+                    options=q["options"],
+                    correct_answer=q["correct_answer"],
+                    explanation=q["explanation"],
+                    content_area=q["content_area"],
+                    model=q.get("model"),
+                )
+                stored_count += 1
 
-                # Store questions
-                for q in questions:
-                    if _generation_state["cancel_requested"]:
-                        break
+            result["generated"] = stored_count
+            result["cost"] = (stored_count * COST_PER_QUESTION) + dedup_cost
 
-                    await repo.create_question(
-                        content=q["question"],
-                        question_type=q.get("type", "multiple_choice"),
-                        options=q["options"],
-                        correct_answer=q["correct_answer"],
-                        explanation=q["explanation"],
-                        content_area=q["content_area"],
-                        model=q.get("model"),
-                    )
+            # Track duplicates (difference between expected and actual)
+            if not skip_dedup:
+                result["duplicates"] = max(0, target_count - stored_count)
 
-                # Update progress
-                generated_count = len(questions)
-                progress["generated"] += generated_count
-                progress["cost"] += (generated_count * COST_PER_QUESTION) + dedup_cost
+            # Update area progress
+            for area_info in progress["areas"]:
+                if area_info["name"] == area_name:
+                    area_info["done"] = stored_count
+                    area_info["status"] = "complete"
+                    break
 
-                # Track duplicates (difference between expected and actual)
-                if not skip_dedup:
-                    # This is an estimate since we don't have exact dup count from pool_manager
-                    progress["duplicates"] += max(0, target_count - generated_count)
+        except Exception as e:
+            logger.error(f"Generation failed for {area_name}: {e}", exc_info=True)
+            result["error"] = str(e)
+            for area_info in progress["areas"]:
+                if area_info["name"] == area_name:
+                    area_info["status"] = "error"
+                    area_info["error"] = str(e)
+                    break
 
-                # Update area progress
-                for area_info in progress["areas"]:
-                    if area_info["name"] == area_name:
-                        area_info["done"] = generated_count
-                        area_info["status"] = "complete"
-                        break
+        return result
 
-            except Exception as e:
+    try:
+        # Create tasks for all content areas
+        tasks = [
+            generate_single_area(area_name, target_count)
+            for area_name, target_count in distribution.items()
+        ]
+
+        # Run all areas in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Aggregate results
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.error(f"Unexpected error in generation task: {result}", exc_info=True)
                 progress["errors"] += 1
-                for area_info in progress["areas"]:
-                    if area_info["name"] == area_name:
-                        area_info["status"] = "error"
-                        area_info["error"] = str(e)
-                        break
+            elif isinstance(result, dict):
+                if result.get("error"):
+                    progress["errors"] += 1
+                else:
+                    progress["generated"] += result["generated"]
+                    progress["duplicates"] += result["duplicates"]
+                    progress["cost"] += result["cost"]
 
     except asyncio.CancelledError:
         logger.info("Generation task was cancelled")
