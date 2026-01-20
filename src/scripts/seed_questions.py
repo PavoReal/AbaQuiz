@@ -161,6 +161,25 @@ async def seed_questions(
     repo = await get_repository(settings.database_path)
     pool_manager = PoolManager()
 
+    try:
+        return await _seed_questions_impl(
+            repo, pool_manager, total_count, specific_area, dry_run, resume, skip_dedup
+        )
+    finally:
+        await repo.close()
+
+
+async def _seed_questions_impl(
+    repo,
+    pool_manager,
+    total_count: int,
+    specific_area: Optional[ContentArea] = None,
+    dry_run: bool = False,
+    resume: bool = False,
+    skip_dedup: bool = False,
+) -> dict[str, Any]:
+    """Implementation of seed_questions with repository passed in."""
+
     # Calculate distribution
     if specific_area:
         distribution = {specific_area: total_count}
