@@ -263,9 +263,11 @@ async def _run_generation(
     pool_manager = get_pool_manager()
     progress = _generation_state["progress"]
 
-    # Cost estimates per question (from DESIGN.md)
-    COST_PER_QUESTION = 0.09  # ~$0.09/question for Sonnet
-    COST_PER_DEDUP = 0.002  # ~$0.002/dedup check for Haiku
+    # Cost estimates per question (Claude 4.5 pricing: Jan 2026)
+    # Sonnet 4.5: $3/MTok input + $15/MTok output (~12K in + 500 out = ~$0.04)
+    # Haiku 4.5: $1/MTok input + $5/MTok output (~800 in + 50 out = ~$0.001)
+    COST_PER_QUESTION = 0.04
+    COST_PER_DEDUP = 0.001
 
     def is_cancelled() -> bool:
         """Check if cancellation was requested."""
@@ -329,12 +331,17 @@ async def _run_generation(
             if not skip_dedup:
                 result["duplicates"] = max(0, target_count - stored_count)
 
-            # Update area progress
+            # Update area progress AND overall progress immediately
             for area_info in progress["areas"]:
                 if area_info["name"] == area_name:
                     area_info["done"] = stored_count
                     area_info["status"] = "complete"
                     break
+
+            # Update overall progress counters so the progress bar updates in real-time
+            progress["generated"] += result["generated"]
+            progress["duplicates"] += result["duplicates"]
+            progress["cost"] += result["cost"]
 
         except Exception as e:
             logger.error(f"Generation failed for {area_name}: {e}", exc_info=True)
@@ -357,18 +364,13 @@ async def _run_generation(
         # Run all areas in parallel
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Aggregate results
+        # Count errors (generated/duplicates/cost already updated in real-time)
         for result in results:
             if isinstance(result, BaseException):
                 logger.error(f"Unexpected error in generation task: {result}", exc_info=True)
                 progress["errors"] += 1
-            elif isinstance(result, dict):
-                if result.get("error"):
-                    progress["errors"] += 1
-                else:
-                    progress["generated"] += result["generated"]
-                    progress["duplicates"] += result["duplicates"]
-                    progress["cost"] += result["cost"]
+            elif isinstance(result, dict) and result.get("error"):
+                progress["errors"] += 1
 
     except asyncio.CancelledError:
         logger.info("Generation task was cancelled")
@@ -472,8 +474,9 @@ async def api_calculate_distribution(request: web.Request) -> web.Response:
     distribution = _calculate_distribution(count, pool_manager.bcba_weights)
 
     # Calculate cost estimate
-    COST_PER_QUESTION = 0.09
-    COST_PER_DEDUP = 0.002 * 5  # 5 dedup checks per question on average
+    # Claude 4.5 pricing (Jan 2026)
+    COST_PER_QUESTION = 0.04  # Sonnet 4.5
+    COST_PER_DEDUP = 0.001 * 5  # Haiku 4.5 × 5 checks per question
 
     cost_with_dedup = count * (COST_PER_QUESTION + COST_PER_DEDUP)
     cost_without_dedup = count * COST_PER_QUESTION

@@ -1051,6 +1051,10 @@ ANTHROPIC_API_KEY=your_key
         "output_per_million": 15.00,
         "cache_write_per_million": 3.75,
         "cache_read_per_million": 0.30
+      },
+      "claude-haiku-4-5": {
+        "input_per_million": 1.00,
+        "output_per_million": 5.00
       }
     }
   }

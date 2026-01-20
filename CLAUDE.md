@@ -147,9 +147,9 @@ python -m src.scripts.seed_questions --dry-run
 python -m src.scripts.seed_questions --resume --count 300
 ```
 
-**Cost Estimate** (approximate):
-- Initial seed (250 questions): ~$4.50
-- Weekly batch (50 questions): ~$0.90
+**Cost Estimate** (Claude 4.5 pricing, Jan 2026):
+- Initial seed (250 questions): ~$11 (with dedup)
+- Weekly batch (50 questions): ~$2.50 (with dedup)
 
 ## Key Design Decisions
 
