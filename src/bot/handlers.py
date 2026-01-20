@@ -233,13 +233,6 @@ async def quiz_command(
         await update.message.reply_text("Please use /start first.")
         return
 
-    # Check daily limit
-    if db_user["daily_extra_count"] >= settings.extra_questions_per_day:
-        await update.message.reply_text(
-            messages.format_daily_limit_reached(settings.extra_questions_per_day)
-        )
-        return
-
     # Check if area specified
     content_area: Optional[str] = None
     if context.args:

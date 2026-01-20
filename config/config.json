@@ -32,6 +32,8 @@
     "dedup_confidence_threshold": "high",
     "dedup_early_exit_batches": 3,
     "generation_batch_size": 5,
+    "max_concurrent_generation": 20,
+    "max_concurrent_dedup": 30,
     "bcba_weights": {
       "Ethics": 0.13,
       "Behavior-Change Procedures": 0.14,

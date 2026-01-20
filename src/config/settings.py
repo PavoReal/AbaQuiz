@@ -106,6 +106,12 @@ class Settings:
         self.pool_generation_batch_size = pool_config.get(
             "generation_batch_size", 5
         )
+        self.pool_max_concurrent_generation = pool_config.get(
+            "max_concurrent_generation", 20
+        )
+        self.pool_max_concurrent_dedup = pool_config.get(
+            "max_concurrent_dedup", 30
+        )
         self.pool_bcba_weights: dict[str, float] = pool_config.get(
             "bcba_weights", {}
         )

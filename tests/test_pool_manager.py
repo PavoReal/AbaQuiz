@@ -29,6 +29,8 @@ def mock_settings():
     settings.pool_dedup_confidence_threshold = "high"
     settings.pool_dedup_early_exit_batches = 3
     settings.pool_generation_batch_size = 5
+    settings.pool_max_concurrent_generation = 20
+    settings.pool_max_concurrent_dedup = 30
     settings.pool_bcba_weights = {}
     return settings
 

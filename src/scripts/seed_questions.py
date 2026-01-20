@@ -213,6 +213,7 @@ async def _seed_questions_impl(
     print("QUESTION SEEDING PLAN")
     print("=" * 60)
     print(f"\nTotal questions to generate: {total_to_generate}")
+    print("  (Parallel generation: ENABLED - all content areas processed simultaneously)")
     if skip_dedup:
         print("  (Deduplication: SKIPPED)")
     print(f"\nDistribution by content area:")
@@ -261,37 +262,54 @@ async def _seed_questions_impl(
         "target_total": total_to_generate,
         "skip_dedup": skip_dedup,
         "completed_areas": [],
-        "current_area": None,
-        "current_area_progress": 0,
+        "in_progress_areas": list(distribution.keys()),
         "stats": {"generated": 0, "rejected": 0},
     }
     save_progress(state)
 
-    # Generate questions with progress
-    print("\nStarting generation...\n")
-    results_by_area: dict[str, int] = {}
-    total_generated = 0
+    # Generate questions with parallel content area processing
+    print("\nStarting parallel generation across all content areas...\n")
     start_time = datetime.now()
 
-    for area, count in distribution.items():
+    # Define async task for each content area
+    async def generate_for_area(
+        area: ContentArea, count: int
+    ) -> tuple[ContentArea, list[dict[str, Any]], Optional[str]]:
+        """Generate questions for a single content area."""
         if count <= 0:
-            continue
+            return (area, [], None)
 
-        state["current_area"] = area.value
-        state["current_area_progress"] = 0
-        save_progress(state)
-
-        print(f"\n[{area.value}] Generating {count} questions...")
-
+        print(f"[{area.value}] Starting generation of {count} questions...")
         try:
-            # Use skip-dedup or normal generation
             if skip_dedup:
                 questions = await pool_manager.generate_without_dedup(area, count)
             else:
                 questions = await pool_manager.generate_with_dedup(area, count)
+            print(f"[{area.value}] Generated {len(questions)}/{count} questions")
+            return (area, questions, None)
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error generating for {area.value}: {e}")
+            print(f"[{area.value}] Error: {e}")
+            return (area, [], error_msg)
 
-            # Store questions and show progress
-            stored_count = 0
+    # Launch all content areas in parallel
+    tasks = [generate_for_area(area, count) for area, count in distribution.items()]
+    area_results = await asyncio.gather(*tasks)
+
+    # Process results and store questions
+    print("\nStoring questions to database...")
+    results_by_area: dict[str, int] = {}
+    total_generated = 0
+
+    for area, questions, error in area_results:
+        if error:
+            results_by_area[area.value] = 0
+            continue
+
+        # Store questions
+        stored_count = 0
+        if questions:
             logger.info(
                 f"Storing batch for {area.value}: {len(questions)} questions generated"
             )
@@ -307,35 +325,18 @@ async def _seed_questions_impl(
                 )
                 stored_count += 1
 
-                # Update progress display
-                if stored_count % 5 == 0 or stored_count == len(questions):
-                    print(
-                        f"  Progress: {stored_count}/{count} stored",
-                        end="\r",
-                        flush=True,
-                    )
-
-            print(f"  Progress: {stored_count}/{count} stored - Done!")
+            print(f"[{area.value}] Stored {stored_count} questions")
             logger.info(
-                f"Batch complete for {area.value}: {stored_count}/{count} stored "
-                f"(total so far: {total_generated + stored_count})"
+                f"Batch complete for {area.value}: {stored_count} stored"
             )
 
-            results_by_area[area.value] = len(questions)
-            total_generated += len(questions)
+        results_by_area[area.value] = len(questions)
+        total_generated += len(questions)
 
-            # Update state
-            state["completed_areas"].append(area.value)
-            state["stats"]["generated"] = total_generated
-            save_progress(state)
-
-            logger.info(f"Generated {len(questions)}/{count} questions for {area.value}")
-
-        except Exception as e:
-            logger.error(f"Error generating for {area.value}: {e}")
-            print(f"  Error: {e}")
-            results_by_area[area.value] = 0
-            save_progress(state)
+        # Update state
+        state["completed_areas"].append(area.value)
+        state["stats"]["generated"] = total_generated
+        save_progress(state)
 
     # Clear state on completion
     clear_progress()
