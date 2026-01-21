@@ -8,6 +8,7 @@ leveraging its 400K context window and native PDF capabilities.
 import asyncio
 import base64
 import io
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -21,7 +22,13 @@ from src.config.logging import get_logger
 logger = get_logger(__name__)
 
 # Extended backoff delays in seconds (1 min, 5 min, 10 min)
+# Used only after SDK's built-in retries are exhausted
 EXTENDED_BACKOFF_DELAYS = [60, 300, 600]
+
+
+def _get_jittered_delay(base_delay: int) -> float:
+    """Add random jitter (0-10%) to avoid thundering herd."""
+    return base_delay * (1 + 0.1 * random.random())
 
 
 class PersistentRateLimitError(Exception):
@@ -103,7 +110,13 @@ class PDFProcessor:
             delay_between_calls: Delay in seconds between API calls
             max_tokens: Maximum output tokens (GPT 5.2 supports up to 128K)
         """
-        self.client = OpenAI(api_key=api_key)
+        # Configure SDK with built-in retries (exponential backoff with jitter)
+        # This handles 429/5xx errors automatically before our extended backoff kicks in
+        self.client = OpenAI(
+            api_key=api_key,
+            max_retries=5,  # Increased from default 2
+            timeout=300.0,  # 5 min timeout for large PDFs
+        )
         self.model = model
         self.delay_between_calls = delay_between_calls
         self.max_tokens = max_tokens
@@ -240,6 +253,12 @@ class PDFProcessor:
         # Combine all parts
         full_markdown = "\n\n".join(markdown_parts)
 
+        # Debug: save response to file for inspection
+        if verbose:
+            debug_path = Path("data/debug_response.md")
+            debug_path.write_text(full_markdown, encoding="utf-8")
+            logger.info(f"DEBUG: Response saved to {debug_path}")
+
         return ProcessedDocument(
             markdown=full_markdown,
             page_count=page_count,
@@ -253,16 +272,17 @@ class PDFProcessor:
         pdf_data: bytes,
         system_prompt: str,
         user_prompt: str,
-        retries: int = 3,
     ) -> str:
         """
         Send PDF to GPT 5.2 API using file input type.
+
+        SDK handles retries automatically (max_retries=5 with exponential backoff).
+        Extended backoff is used only for persistent rate limiting in batch scenarios.
 
         Args:
             pdf_data: PDF file bytes
             system_prompt: System prompt
             user_prompt: User prompt
-            retries: Number of initial retries
 
         Returns:
             Response text from the API
@@ -297,22 +317,23 @@ class PDFProcessor:
         return await self._call_with_extended_backoff(
             call_type="pdf_extract",
             messages=messages,
-            retries=retries,
         )
 
     async def _call_with_extended_backoff(
         self,
         call_type: str,
         messages: list,
-        retries: int = 3,
     ) -> str:
         """
-        Make an API call with initial retries and extended backoff on persistent failures.
+        Make an API call with SDK built-in retries and extended backoff for batch processing.
+
+        The OpenAI SDK handles initial retries automatically (max_retries=5 with exponential
+        backoff and jitter). Extended backoff is only used for persistent rate limiting
+        in batch processing scenarios where we want to wait longer rather than fail.
 
         Args:
             call_type: Type of call for logging
             messages: Messages list for the API call (includes developer message for system prompt)
-            retries: Number of initial retries per attempt
 
         Returns:
             Response text from the API
@@ -320,69 +341,66 @@ class PDFProcessor:
         Raises:
             PersistentRateLimitError: If all extended backoff attempts fail
         """
-        # Try with initial retries first
-        for attempt in range(retries):
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    max_completion_tokens=self.max_tokens,
-                    messages=messages,
-                )
+        # First attempt - SDK handles retries automatically with exponential backoff
+        try:
+            logger.info(f"API call [{call_type}]: sending request to {self.model}")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                max_completion_tokens=self.max_tokens,
+                messages=messages,
+            )
 
-                self._log_api_call(
-                    call_type,
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
-                )
+            content = response.choices[0].message.content
+            logger.info(
+                f"API call [{call_type}]: received response, "
+                f"{len(content):,} chars, finish_reason={response.choices[0].finish_reason}"
+            )
 
-                await asyncio.sleep(self.delay_between_calls)
-                return response.choices[0].message.content
+            self._log_api_call(
+                call_type,
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+            )
 
-            except openai.RateLimitError as e:
-                # Extract retry-after header if available
-                retry_after = None
-                if hasattr(e, "response") and e.response is not None:
-                    retry_after = e.response.headers.get("retry-after")
+            await asyncio.sleep(self.delay_between_calls)
+            return content
 
-                if retry_after:
-                    wait_time = int(retry_after) + 1  # Add 1s buffer
-                else:
-                    wait_time = (attempt + 1) * 10  # Fallback
+        except openai.RateLimitError as e:
+            # SDK retries exhausted - use extended backoff for batch processing
+            limit_type = self._identify_rate_limit_type(str(e))
+            logger.warning(
+                f"SDK retries exhausted ({limit_type}), starting extended backoff for batch processing..."
+            )
 
-                # Identify which limit was hit
-                limit_type = self._identify_rate_limit_type(str(e))
-                logger.warning(
-                    f"Rate limited ({limit_type}, retry-after: {retry_after}s), "
-                    f"waiting {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
+        except openai.APIError as e:
+            # Non-rate-limit API errors - don't use extended backoff, just fail
+            logger.error(f"API error (SDK retries exhausted): {e}")
+            raise
 
-            except openai.APIConnectionError as e:
-                logger.error(f"API connection error on attempt {attempt + 1}: {e}")
-                if attempt < retries - 1:
-                    await asyncio.sleep(5 * (attempt + 1))
+        # Extended backoff - for persistent rate limiting in batch scenarios
+        for i, base_delay in enumerate(EXTENDED_BACKOFF_DELAYS):
+            # Add jitter to avoid thundering herd
+            delay = _get_jittered_delay(base_delay)
+            delay_mins = base_delay // 60
 
-            except openai.APIError as e:
-                logger.error(f"API error on attempt {attempt + 1}: {e}")
-                if attempt < retries - 1:
-                    await asyncio.sleep(5 * (attempt + 1))
-
-        # Initial retries exhausted, try extended backoff
-        logger.warning("Initial retries exhausted, starting extended backoff...")
-
-        for i, delay in enumerate(EXTENDED_BACKOFF_DELAYS):
-            delay_mins = delay // 60
             logger.warning(
                 f"Extended backoff {i + 1}/{len(EXTENDED_BACKOFF_DELAYS)}: "
-                f"waiting {delay_mins} minute(s)..."
+                f"waiting ~{delay_mins} minute(s)..."
             )
             await asyncio.sleep(delay)
 
             try:
+                logger.info(f"API call [{call_type}]: sending request to {self.model} (extended backoff {i + 1})")
                 response = self.client.chat.completions.create(
                     model=self.model,
                     max_completion_tokens=self.max_tokens,
                     messages=messages,
+                )
+
+                content = response.choices[0].message.content
+                logger.info(
+                    f"API call [{call_type}]: received response, "
+                    f"{len(content):,} chars, finish_reason={response.choices[0].finish_reason}"
                 )
 
                 self._log_api_call(
@@ -393,7 +411,7 @@ class PDFProcessor:
 
                 logger.info("Extended backoff successful, resuming normal operation")
                 await asyncio.sleep(self.delay_between_calls)
-                return response.choices[0].message.content
+                return content
 
             except openai.RateLimitError as e:
                 # Check if API provided a specific retry-after time

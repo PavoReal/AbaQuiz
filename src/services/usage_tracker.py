@@ -1,7 +1,7 @@
 """
 API usage tracking service for AbaQuiz.
 
-Tracks Claude API usage for cost monitoring and analytics.
+Tracks API usage (Claude and OpenAI) for cost monitoring and analytics.
 """
 
 from typing import Any, Optional

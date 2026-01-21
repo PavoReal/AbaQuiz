@@ -15,12 +15,13 @@ Quick reference for Claude Code working with this repository. Keep this concise 
 ## Tech Stack
 
 - **Python 3.14+** with python-telegram-bot v20+
-- **Claude claude-sonnet-4-5** for question generation (configurable in config.json)
-- **Claude Haiku** for deduplication checks
+- **GPT 5.2** for question generation and PDF preprocessing (400K context, 128K output)
+- **Claude Sonnet 4-5** for user responses (unchanged)
+- **Claude Haiku** for deduplication checks (unchanged - cheapest option)
 - **SQLite + aiosqlite** for async database
 - **APScheduler** for scheduled delivery
 - **aiohttp + Jinja2 + HTMX** for web admin interface
-- **Native PDF support** via Anthropic API (not pdfplumber)
+- **Native PDF support** via OpenAI API (GPT 5.2)
 - **Docker** for deployment
 
 ## Commands
@@ -60,7 +61,7 @@ source .venv/bin/activate
 ### Core Flow
 1. **Scheduler** → triggers at 8 AM/PM per user timezone
 2. **Pool Manager** → checks threshold, triggers batch generation if needed
-3. **Question Generator** → loads `data/processed/*.md`, calls Claude API
+3. **Question Generator** → loads `data/processed/*.md`, calls GPT 5.2 API
 4. **Bot Handler** → sends question with inline keyboard
 5. **Callback Handler** → processes answer, updates stats, awards achievements
 
@@ -71,7 +72,7 @@ source .venv/bin/activate
 | `src/bot/handlers.py` | User commands (/start, /quiz, /stats) |
 | `src/bot/admin_handlers.py` | Admin commands (/ban, /broadcast, /usage) |
 | `src/bot/middleware.py` | DM-only, ban check, rate limiting decorators |
-| `src/services/question_generator.py` | Claude API integration |
+| `src/services/question_generator.py` | GPT 5.2 API integration for question generation |
 | `src/services/pool_manager.py` | Threshold checks, BCBA weights, dedup |
 | `src/services/scheduler.py` | APScheduler job setup |
 | `src/services/content_validator.py` | Validates MD files at startup |
@@ -103,14 +104,15 @@ Tech: aiohttp server + Jinja2 templates + HTMX for reactivity + Tailwind CSS
 
 | File | Contents |
 |------|----------|
-| `.env` | Secrets: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY |
+| `.env` | Secrets: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY |
 | `config/config.json` | All settings (supports `${ENV_VAR}` substitution) |
 
 Key config sections:
-- `question_generation.model` - Claude model for generation
+- `question_generation.openai_model` - GPT model for question generation (default: gpt-5.2)
+- `preprocessing.model` - GPT model for PDF extraction (default: gpt-5.2)
 - `pool_management.threshold` - Min unseen questions per active user (default: 20)
 - `pool_management.BCBA_WEIGHTS` - Distribution across 9 content areas
-- `pricing` - Token costs for Sonnet/Haiku including cache pricing
+- `pricing` - Token costs for Sonnet/Haiku/GPT-5.2 including cache pricing
 
 ## Database
 
@@ -157,11 +159,12 @@ Schema migrations managed in `src/database/migrations.py`
 
 ## PDF Preprocessing
 
-Uses **Claude's native PDF support** - sends PDFs directly to API (not pdfplumber extraction).
+Uses **GPT 5.2's native PDF support** - sends PDFs directly to API (not pdfplumber extraction).
+Leverages GPT 5.2's 400K context window for complete document processing.
 
 Pipeline:
 1. Load PDF from `data/raw/`
-2. Send to Claude API for structured markdown extraction
+2. Send to GPT 5.2 API for structured markdown extraction
 3. Output to `data/processed/{area}/` organized by BCBA content area
 
 Output directories: `core/`, `ethics/`, `supervision/`, `reference/`

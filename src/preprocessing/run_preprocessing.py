@@ -1,7 +1,7 @@
 """
 CLI for running the PDF preprocessing pipeline.
 
-Uses Claude's native PDF support for direct extraction and structuring.
+Uses GPT 5.2's native PDF support for direct extraction and structuring.
 
 Usage:
     python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
@@ -180,7 +180,7 @@ async def process_single_pdf(
     verbose: bool = False,
 ) -> dict[str, Any]:
     """
-    Process a single PDF file using Claude's native PDF support.
+    Process a single PDF file using GPT 5.2's native PDF support.
 
     Returns dict with processing stats.
     """
@@ -218,7 +218,7 @@ async def process_single_pdf(
         return result
 
     try:
-        # Process PDF using Claude's native PDF support
+        # Process PDF using GPT 5.2's native PDF support
         doc = await processor.process_pdf(pdf_path, verbose=verbose)
 
         result["pages"] = doc.page_count
@@ -354,11 +354,11 @@ def print_summary(results: list[dict[str, Any]], processor: PDFProcessor) -> Non
                 f"{r['output_tokens']:,} out"
             )
 
-    # Estimate cost using Sonnet pricing
-    input_cost = tokens["input"] / 1_000_000 * 3.00
-    output_cost = tokens["output"] / 1_000_000 * 15.00
+    # Estimate cost using GPT 5.2 pricing ($1.75/1M input, $14/1M output)
+    input_cost = tokens["input"] / 1_000_000 * 1.75
+    output_cost = tokens["output"] / 1_000_000 * 14.00
     total_cost = input_cost + output_cost
-    print(f"\nEstimated cost (Sonnet): ${total_cost:.4f}")
+    print(f"\nEstimated cost (GPT 5.2): ${total_cost:.4f}")
     print(f"  Input: ${input_cost:.4f}")
     print(f"  Output: ${output_cost:.4f}")
 
@@ -383,10 +383,10 @@ async def main(
     # Load environment variables
     load_dotenv()
 
-    # Get API key
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    # Get API key (OpenAI for GPT 5.2)
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        print("Error: ANTHROPIC_API_KEY not set in environment or .env file")
+        print("Error: OPENAI_API_KEY not set in environment or .env file")
         sys.exit(1)
 
     # Load config
@@ -403,11 +403,12 @@ async def main(
     if already_processed > 0:
         logger.info(f"Manifest loaded: {already_processed} PDFs already processed")
 
-    # Initialize processor with Claude's native PDF support
+    # Initialize processor with GPT 5.2's native PDF support
     processor = PDFProcessor(
         api_key=api_key,
-        model=config.get("model", "claude-sonnet-4-5"),
+        model=config.get("model", "gpt-5.2"),
         delay_between_calls=config.get("delay_between_calls", 1.0),
+        max_tokens=config.get("max_tokens", 32768),
     )
 
     # Discover PDFs
@@ -445,7 +446,7 @@ async def main(
     print(f"Found {len(pdfs)} PDF files to process")
 
     if dry_run:
-        print("\n[DRY RUN MODE - No Claude API calls will be made]\n")
+        print("\n[DRY RUN MODE - No GPT 5.2 API calls will be made]\n")
 
     if ask:
         print("\n[INTERACTIVE MODE - You will be prompted before each PDF]\n")
@@ -521,7 +522,7 @@ async def main(
 def cli() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Preprocess BCBA study PDFs into structured markdown using Claude's native PDF support",
+        description="Preprocess BCBA study PDFs into structured markdown using GPT 5.2's native PDF support",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -569,7 +570,7 @@ Examples:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be processed without calling Claude API",
+        help="Show what would be processed without calling GPT 5.2 API",
     )
 
     parser.add_argument(
