@@ -63,6 +63,12 @@ class PersistentRateLimitError(Exception):
     pass
 
 
+class ContentFilterError(Exception):
+    """Raised when API response is blocked by content filter."""
+
+    pass
+
+
 # System prompt for PDF extraction
 PDF_EXTRACTION_PROMPT = """You are processing BCBA exam study material from a PDF document.
 
@@ -88,6 +94,97 @@ class ProcessedDocument:
     api_calls: int
 
 
+@dataclass
+class ChunkJob:
+    """A single chunk of a PDF to process."""
+
+    pdf_name: str  # "BCBA-Handbook.pdf"
+    chunk_index: int  # 0, 1, 2...
+    total_chunks: int  # total chunks for this PDF
+    pdf_data: bytes  # chunk PDF bytes
+    estimated_tokens: int  # for progress display
+
+
+@dataclass
+class ChunkResult:
+    """Result of processing a single chunk."""
+
+    pdf_name: str
+    chunk_index: int
+    markdown: str
+    input_tokens: int
+    output_tokens: int
+    error: str | None = None
+
+
+class ProgressTracker:
+    """Track concurrent API calls for unified progress display."""
+
+    def __init__(self, max_concurrent: int = 3) -> None:
+        self._max_concurrent = max_concurrent
+        self._active: dict[str, tuple[ChunkJob, float]] = {}  # job_id -> (job, start_time)
+        self._display_task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+        self._running = False
+        self._total_estimated_cost = 0.0
+
+    async def register(self, job: ChunkJob) -> str:
+        """Register job, return job_id, start display if first."""
+        job_id = f"{Path(job.pdf_name).stem}_{job.chunk_index + 1}"
+        async with self._lock:
+            self._active[job_id] = (job, time.time())
+            self._total_estimated_cost += _estimate_cost(job.estimated_tokens)
+            if not self._running:
+                self._running = True
+                self._display_task = asyncio.create_task(self._display_loop())
+        return job_id
+
+    async def unregister(self, job_id: str) -> None:
+        """Remove job, stop display if last."""
+        async with self._lock:
+            if job_id in self._active:
+                job, _ = self._active.pop(job_id)
+                self._total_estimated_cost -= _estimate_cost(job.estimated_tokens)
+            if not self._active and self._running:
+                self._running = False
+                if self._display_task:
+                    self._display_task.cancel()
+                    try:
+                        await self._display_task
+                    except asyncio.CancelledError:
+                        pass
+                    self._display_task = None
+                # Clear the status line
+                sys.stderr.write("\r" + " " * 100 + "\r")
+                sys.stderr.flush()
+
+    async def _display_loop(self) -> None:
+        """Single stderr line showing all active jobs."""
+        while self._running:
+            async with self._lock:
+                if not self._active:
+                    break
+
+                # Build status line
+                active_count = len(self._active)
+                parts = [f"Slots: {active_count}/{self._max_concurrent}"]
+
+                # Add each active job with elapsed time
+                for job_id, (job, start_time) in sorted(self._active.items()):
+                    elapsed = time.time() - start_time
+                    elapsed_str = _format_elapsed(elapsed)
+                    parts.append(f"{job_id}: {elapsed_str}")
+
+                # Add estimated cost
+                parts.append(f"Est: ~${self._total_estimated_cost:.2f}")
+
+                status_line = " | ".join(parts)
+                sys.stderr.write(f"\r  {status_line}    ")
+                sys.stderr.flush()
+
+            await asyncio.sleep(1)
+
+
 class PDFProcessor:
     """Process PDFs using OpenAI GPT 5.2's native PDF support."""
 
@@ -96,7 +193,7 @@ class PDFProcessor:
         api_key: str,
         model: str = "gpt-5.2",
         delay_between_calls: float = 1.0,
-        max_tokens: int = 32768,
+        max_tokens: int = 65536,
     ) -> None:
         """
         Initialize the PDF processor.
@@ -111,7 +208,7 @@ class PDFProcessor:
         self.client = AsyncOpenAI(
             api_key=api_key,
             max_retries=1,
-            timeout=600.0,  # 10 min timeout for large PDFs
+            timeout=1800.0,  # 30 min timeout for large PDFs
         )
         self.model = model
         self.delay_between_calls = delay_between_calls
@@ -128,6 +225,9 @@ class PDFProcessor:
         self._pdf_input_tokens = 0
         self._pdf_output_tokens = 0
         self._pdf_api_calls = 0
+
+        # Progress tracker for parallel chunk processing
+        self._progress_tracker: ProgressTracker | None = None
 
         logger.info(f"PDFProcessor initialized with model: {self.model}")
 
@@ -526,6 +626,272 @@ class PDFProcessor:
             chunks.append(buffer.getvalue())
 
         return chunks
+
+    def prepare_chunks(self, pdf_path: Path) -> list[ChunkJob]:
+        """
+        Prepare chunk jobs for a PDF without processing.
+
+        Args:
+            pdf_path: Path to the PDF file
+
+        Returns:
+            List of ChunkJob objects ready for parallel processing
+        """
+        pdf_name = pdf_path.name
+        pdf_chunks = self._split_large_pdf(pdf_path)
+
+        jobs = []
+        for i, chunk_bytes in enumerate(pdf_chunks):
+            # Estimate tokens from base64 size
+            pdf_base64_len = len(base64.standard_b64encode(chunk_bytes))
+            estimated_tokens = _estimate_tokens_from_base64(pdf_base64_len)
+
+            jobs.append(
+                ChunkJob(
+                    pdf_name=pdf_name,
+                    chunk_index=i,
+                    total_chunks=len(pdf_chunks),
+                    pdf_data=chunk_bytes,
+                    estimated_tokens=estimated_tokens,
+                )
+            )
+
+        return jobs
+
+    async def process_chunks_parallel(
+        self,
+        jobs: list[ChunkJob],
+        max_concurrent: int = 3,
+    ) -> list[ChunkResult]:
+        """
+        Process chunk jobs with bounded concurrency.
+
+        Args:
+            jobs: List of ChunkJob objects to process
+            max_concurrent: Maximum concurrent API calls
+
+        Returns:
+            List of ChunkResult objects in same order as input jobs
+        """
+        semaphore = asyncio.Semaphore(max_concurrent)
+        self._progress_tracker = ProgressTracker(max_concurrent)
+
+        progress_tracker = self._progress_tracker  # Local reference for type checker
+
+        async def process_one(job: ChunkJob) -> ChunkResult:
+            async with semaphore:
+                job_id = await progress_tracker.register(job)
+                try:
+                    markdown = await self._process_chunk_job(job)
+                    return ChunkResult(
+                        pdf_name=job.pdf_name,
+                        chunk_index=job.chunk_index,
+                        markdown=markdown,
+                        input_tokens=0,  # Updated by _log_api_call
+                        output_tokens=0,  # Updated by _log_api_call
+                        error=None,
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing chunk {job_id}: {e}")
+                    return ChunkResult(
+                        pdf_name=job.pdf_name,
+                        chunk_index=job.chunk_index,
+                        markdown="",
+                        input_tokens=0,
+                        output_tokens=0,
+                        error=str(e),
+                    )
+                finally:
+                    await progress_tracker.unregister(job_id)
+
+        results = await asyncio.gather(*[process_one(job) for job in jobs])
+        self._progress_tracker = None
+        return list(results)
+
+    async def _process_chunk_job(self, job: ChunkJob) -> str:
+        """
+        Process a single chunk job with one retry on content filter.
+
+        Args:
+            job: ChunkJob to process
+
+        Returns:
+            Extracted markdown content
+        """
+        # Encode PDF as base64 data URL
+        pdf_base64 = base64.standard_b64encode(job.pdf_data).decode("utf-8")
+
+        # Build message with PDF file for GPT 5.2
+        messages = [
+            {
+                "role": "developer",
+                "content": PDF_EXTRACTION_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": "document.pdf",
+                            "file_data": f"data:application/pdf;base64,{pdf_base64}",
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": f"Extract and structure content from this PDF (part {job.chunk_index + 1}/{job.total_chunks}): {job.pdf_name}",
+                    },
+                ],
+            },
+        ]
+
+        # Try once, retry once on content filter
+        try:
+            return await self._call_api_no_progress(
+                call_type="pdf_extract",
+                messages=messages,
+            )
+        except ContentFilterError as e:
+            job_id = f"{Path(job.pdf_name).stem}_{job.chunk_index + 1}"
+            logger.warning(f"Content filter on {job_id}, retrying once: {e}")
+            await asyncio.sleep(2)  # Brief delay before retry
+            return await self._call_api_no_progress(
+                call_type="pdf_extract_retry",
+                messages=messages,
+            )
+
+    async def _call_api_no_progress(
+        self,
+        call_type: str,
+        messages: list,
+    ) -> str:
+        """
+        Make an API call without individual progress display.
+
+        Used by parallel chunk processing where ProgressTracker handles display.
+
+        Args:
+            call_type: Type of call for logging
+            messages: Messages list for the API call
+
+        Returns:
+            Response text from the API
+        """
+        # First attempt - SDK handles retries automatically
+        try:
+            logger.info(f"API call [{call_type}]: sending request to {self.model}")
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                max_completion_tokens=self.max_tokens,
+                messages=messages,
+            )
+
+            finish_reason = response.choices[0].finish_reason
+            content = response.choices[0].message.content or ""
+            logger.info(
+                f"API call [{call_type}]: received response, "
+                f"{len(content):,} chars, finish_reason={finish_reason}"
+            )
+
+            self._log_api_call(
+                call_type,
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+            )
+
+            # Check for content filter
+            if finish_reason == "content_filter":
+                raise ContentFilterError(
+                    f"Response blocked by content filter (finish_reason={finish_reason})"
+                )
+
+            await asyncio.sleep(self.delay_between_calls)
+            return content
+
+        except openai.RateLimitError as e:
+            # Rate limited - use extended backoff for batch processing
+            limit_type = self._identify_rate_limit_type(str(e))
+            logger.warning(
+                f"Rate limited ({limit_type}), starting extended backoff..."
+            )
+
+        except openai.APIError as e:
+            # Non-rate-limit API errors - fail immediately
+            logger.error(f"API error: {e}")
+            raise
+
+        # Extended backoff - for persistent rate limiting in batch scenarios
+        for i, base_delay in enumerate(EXTENDED_BACKOFF_DELAYS):
+            delay = _get_jittered_delay(base_delay)
+            delay_mins = base_delay // 60
+
+            logger.warning(
+                f"Extended backoff {i + 1}/{len(EXTENDED_BACKOFF_DELAYS)}: "
+                f"waiting ~{delay_mins} minute(s)..."
+            )
+            await asyncio.sleep(delay)
+
+            try:
+                logger.info(f"API call [{call_type}]: sending request to {self.model} (extended backoff {i + 1})")
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    max_completion_tokens=self.max_tokens,
+                    messages=messages,
+                )
+
+                finish_reason = response.choices[0].finish_reason
+                content = response.choices[0].message.content or ""
+                logger.info(
+                    f"API call [{call_type}]: received response, "
+                    f"{len(content):,} chars, finish_reason={finish_reason}"
+                )
+
+                self._log_api_call(
+                    call_type,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                )
+
+                # Check for content filter
+                if finish_reason == "content_filter":
+                    raise ContentFilterError(
+                        f"Response blocked by content filter (finish_reason={finish_reason})"
+                    )
+
+                logger.info("Extended backoff successful, resuming normal operation")
+                await asyncio.sleep(self.delay_between_calls)
+                return content
+
+            except openai.RateLimitError as e:
+                retry_after = None
+                if hasattr(e, "response") and e.response is not None:
+                    retry_after = e.response.headers.get("retry-after")
+
+                limit_type = self._identify_rate_limit_type(str(e))
+                if retry_after:
+                    logger.warning(
+                        f"Still rate limited ({limit_type}) after {delay_mins} minute wait. "
+                        f"API says wait {retry_after}s"
+                    )
+                else:
+                    logger.warning(
+                        f"Still rate limited ({limit_type}) after {delay_mins} minute wait"
+                    )
+                continue
+
+            except openai.APIError as e:
+                logger.error(f"API error during extended backoff: {e}")
+                continue
+
+        # All extended backoff attempts failed
+        logger.error(
+            "All extended backoff attempts failed (1min, 5min, 10min). "
+            "Stopping to preserve progress."
+        )
+        raise PersistentRateLimitError(
+            "Rate limiting persists after extended backoff. "
+            "Progress has been saved - resume later with same command."
+        )
 
 
 def get_document_output_path(pdf_name: str) -> str:
