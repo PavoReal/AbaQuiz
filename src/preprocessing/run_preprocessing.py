@@ -463,7 +463,15 @@ async def main(
                     break
                 elif response == "s":
                     print("  Skipped by user")
-                    results.append({"pdf": pdf.name, "status": "skipped", "reason": "user skipped"})
+                    results.append({
+                        "pdf": pdf.name,
+                        "status": "skipped",
+                        "reason": "user skipped",
+                        "pages": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "api_calls": 0,
+                    })
                     continue
                 elif response == "a":
                     process_all = True

@@ -9,6 +9,8 @@ import asyncio
 import base64
 import io
 import random
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +30,31 @@ EXTENDED_BACKOFF_DELAYS = [60, 300, 600]
 def _get_jittered_delay(base_delay: int) -> float:
     """Add random jitter (0-10%) to avoid thundering herd."""
     return base_delay * (1 + 0.1 * random.random())
+
+
+def _estimate_tokens_from_base64(base64_size: int) -> int:
+    """Estimate input tokens from base64 encoded PDF size.
+
+    Formula: base64_size × 0.75 (base64 overhead) ÷ 4 (chars per token) ≈ tokens
+    More conservative: ~1.5 tokens per character of base64 for PDF content.
+    """
+    return int(base64_size * 0.75 / 4)
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed time as Xm Ys."""
+    mins = int(seconds // 60)
+    secs = int(seconds % 60)
+    if mins > 0:
+        return f"{mins}m {secs}s"
+    return f"{secs}s"
+
+
+def _estimate_cost(input_tokens: int, output_tokens: int = 0) -> float:
+    """Estimate cost using GPT 5.2 pricing ($1.75/1M input, $14/1M output)."""
+    input_cost = input_tokens / 1_000_000 * 1.75
+    output_cost = output_tokens / 1_000_000 * 14.00
+    return input_cost + output_cost
 
 
 class PersistentRateLimitError(Exception):
@@ -84,12 +111,12 @@ class PDFProcessor:
         self.client = AsyncOpenAI(
             api_key=api_key,
             max_retries=1,
-            timeout=300.0,  # 5 min timeout for large PDFs
+            timeout=600.0,  # 10 min timeout for large PDFs
         )
         self.model = model
         self.delay_between_calls = delay_between_calls
         self.max_tokens = max_tokens
-        self.max_pages_per_request = 100  # GPT 5.2 supports up to 100 pages
+        self.max_pages_per_request = 40  # Lower threshold to force chunking for faster processing
         self.max_file_size_mb = 32  # GPT 5.2 supports up to 32MB
 
         # Total token tracking (across all PDFs)
@@ -291,15 +318,20 @@ class PDFProcessor:
             },
         ]
 
+        # Estimate tokens for progress display
+        estimated_tokens = _estimate_tokens_from_base64(len(pdf_base64))
+
         return await self._call_with_extended_backoff(
             call_type="pdf_extract",
             messages=messages,
+            estimated_input_tokens=estimated_tokens,
         )
 
     async def _call_with_extended_backoff(
         self,
         call_type: str,
         messages: list,
+        estimated_input_tokens: int = 0,
     ) -> str:
         """
         Make an API call with extended backoff for batch processing.
@@ -310,6 +342,7 @@ class PDFProcessor:
         Args:
             call_type: Type of call for logging
             messages: Messages list for the API call (includes developer message for system prompt)
+            estimated_input_tokens: Estimated input tokens for progress display
 
         Returns:
             Response text from the API
@@ -317,7 +350,27 @@ class PDFProcessor:
         Raises:
             PersistentRateLimitError: If all extended backoff attempts fail
         """
+        # Display progress info during API call
+        est_cost = _estimate_cost(estimated_input_tokens)
+        est_tokens_k = estimated_input_tokens / 1000
+
+        async def _show_progress(start_time: float) -> None:
+            """Show progress while waiting for API response."""
+            while True:
+                elapsed = time.time() - start_time
+                elapsed_str = _format_elapsed(elapsed)
+                # Write to stderr to avoid interfering with logs
+                sys.stderr.write(
+                    f"\r  Processing... Elapsed: {elapsed_str} | "
+                    f"Est. input: ~{est_tokens_k:.0f}K tokens | "
+                    f"Est. cost: ~${est_cost:.2f}    "
+                )
+                sys.stderr.flush()
+                await asyncio.sleep(1)
+
         # First attempt - SDK handles retries automatically with exponential backoff
+        start_time = time.time()
+        progress_task = asyncio.create_task(_show_progress(start_time))
         try:
             logger.info(f"API call [{call_type}]: sending request to {self.model}")
             response = await self.client.chat.completions.create(
@@ -325,6 +378,9 @@ class PDFProcessor:
                 max_completion_tokens=self.max_tokens,
                 messages=messages,
             )
+            progress_task.cancel()
+            sys.stderr.write("\r" + " " * 80 + "\r")  # Clear progress line
+            sys.stderr.flush()
 
             content = response.choices[0].message.content
             logger.info(
@@ -342,6 +398,9 @@ class PDFProcessor:
             return content
 
         except openai.RateLimitError as e:
+            progress_task.cancel()
+            sys.stderr.write("\r" + " " * 80 + "\r")  # Clear progress line
+            sys.stderr.flush()
             # Rate limited - use extended backoff for batch processing
             limit_type = self._identify_rate_limit_type(str(e))
             logger.warning(
@@ -349,6 +408,9 @@ class PDFProcessor:
             )
 
         except openai.APIError as e:
+            progress_task.cancel()
+            sys.stderr.write("\r" + " " * 80 + "\r")  # Clear progress line
+            sys.stderr.flush()
             # Non-rate-limit API errors - fail immediately
             logger.error(f"API error: {e}")
             raise
