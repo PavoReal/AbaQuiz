@@ -309,11 +309,10 @@ class QuestionGenerator:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        # Use AsyncOpenAI with built-in retries (exponential backoff with jitter)
-        # SDK handles 429/5xx errors automatically
+        # Use AsyncOpenAI for non-blocking API calls
         self.client = AsyncOpenAI(
             api_key=self.settings.openai_api_key,
-            max_retries=5,  # Increased from default 2
+            max_retries=1,
         )
         # Use absolute path from project root
         self.processed_content_dir = Path(__file__).parent.parent.parent / "data" / "processed"

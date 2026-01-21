@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import openai
-from openai import OpenAI
+from openai import AsyncOpenAI
 from pypdf import PdfReader, PdfWriter
 
 from src.config.logging import get_logger
@@ -50,34 +50,6 @@ Your task:
 
 Output clean markdown only. No commentary or explanations."""
 
-# Documents to process with their output paths (BCBA exam relevant materials only)
-BCBA_DOCUMENTS: dict[str, str] = {
-    # Core BCBA materials
-    "BCBA-Task-List-5th-Edition.pdf": "core/task_list.md",
-    "BCBA-Handbook.pdf": "core/handbook.md",
-    "BCBA-TCO-6th-Edition.pdf": "core/tco.md",
-    "BCBA-6th-Edition-Test-Content-Outline-240903-a.pdf": "core/tco.md",  # Updated TCO
-    # Ethics
-    "Ethics-Code-for-Behavior-Analysts.pdf": "ethics/ethics_code.md",
-    # Supervision
-    "Supervisor-Training-Curriculum.pdf": "supervision/curriculum.md",
-    # Reference materials
-    "ABA-Glossary-Workbook.pdf": "reference/glossary.md",
-    "ABA-Terminology-Acronyms.pdf": "reference/key_terms.md",
-    "PECS-Glossary.pdf": "reference/glossary.md",
-}
-
-# Documents to skip (not BCBA exam relevant)
-SKIP_DOCUMENTS: set[str] = {
-    "ACE-Provider-Handbook.pdf",
-    "BCaBA-Handbook.pdf",
-    "BCaBA-TCO-6th-Edition.pdf",
-    "RBT-Ethics-Code.pdf",
-    "RBT-Handbook.pdf",
-    "ABA-101-Handouts.pdf",
-    "ABA-Description-Michigan.pdf",
-    "ABA-Introduction-Autism-NJ.pdf",
-}
 
 
 @dataclass
@@ -110,11 +82,10 @@ class PDFProcessor:
             delay_between_calls: Delay in seconds between API calls
             max_tokens: Maximum output tokens (GPT 5.2 supports up to 128K)
         """
-        # Configure SDK with built-in retries (exponential backoff with jitter)
-        # This handles 429/5xx errors automatically before our extended backoff kicks in
-        self.client = OpenAI(
+        # Configure OpenAI client (extended backoff handles rate limits)
+        self.client = AsyncOpenAI(
             api_key=api_key,
-            max_retries=5,  # Increased from default 2
+            max_retries=1,
             timeout=300.0,  # 5 min timeout for large PDFs
         )
         self.model = model
@@ -237,18 +208,27 @@ class PDFProcessor:
         if verbose:
             logger.info(f"Split into {len(pdf_chunks)} chunk(s)")
 
-        # Process each chunk
-        markdown_parts = []
-        for i, chunk_bytes in enumerate(pdf_chunks, start=1):
-            if verbose and len(pdf_chunks) > 1:
-                logger.info(f"Processing chunk {i}/{len(pdf_chunks)}")
-
-            chunk_markdown = await self._send_pdf_to_gpt(
-                pdf_data=chunk_bytes,
+        # Process chunks (parallel for multiple chunks)
+        if len(pdf_chunks) == 1:
+            # Single chunk - no parallelization needed
+            markdown_parts = [await self._send_pdf_to_gpt(
+                pdf_data=pdf_chunks[0],
                 system_prompt=PDF_EXTRACTION_PROMPT,
                 user_prompt=f"Extract and structure all content from this PDF document: {pdf_name}",
-            )
-            markdown_parts.append(chunk_markdown)
+            )]
+        else:
+            if verbose:
+                logger.info(f"Processing {len(pdf_chunks)} chunks in parallel")
+
+            tasks = [
+                self._send_pdf_to_gpt(
+                    pdf_data=chunk_bytes,
+                    system_prompt=PDF_EXTRACTION_PROMPT,
+                    user_prompt=f"Extract and structure content from this PDF (part {i}/{len(pdf_chunks)}): {pdf_name}",
+                )
+                for i, chunk_bytes in enumerate(pdf_chunks, start=1)
+            ]
+            markdown_parts = await asyncio.gather(*tasks)
 
         # Combine all parts
         full_markdown = "\n\n".join(markdown_parts)
@@ -276,8 +256,7 @@ class PDFProcessor:
         """
         Send PDF to GPT 5.2 API using file input type.
 
-        SDK handles retries automatically (max_retries=5 with exponential backoff).
-        Extended backoff is used only for persistent rate limiting in batch scenarios.
+        Extended backoff is used for rate limiting in batch scenarios.
 
         Args:
             pdf_data: PDF file bytes
@@ -325,11 +304,10 @@ class PDFProcessor:
         messages: list,
     ) -> str:
         """
-        Make an API call with SDK built-in retries and extended backoff for batch processing.
+        Make an API call with extended backoff for batch processing.
 
-        The OpenAI SDK handles initial retries automatically (max_retries=5 with exponential
-        backoff and jitter). Extended backoff is only used for persistent rate limiting
-        in batch processing scenarios where we want to wait longer rather than fail.
+        Extended backoff is used for rate limiting in batch processing scenarios
+        where we want to wait longer rather than fail.
 
         Args:
             call_type: Type of call for logging
@@ -344,7 +322,7 @@ class PDFProcessor:
         # First attempt - SDK handles retries automatically with exponential backoff
         try:
             logger.info(f"API call [{call_type}]: sending request to {self.model}")
-            response = self.client.chat.completions.create(
+            response = await self.client.chat.completions.create(
                 model=self.model,
                 max_completion_tokens=self.max_tokens,
                 messages=messages,
@@ -366,15 +344,15 @@ class PDFProcessor:
             return content
 
         except openai.RateLimitError as e:
-            # SDK retries exhausted - use extended backoff for batch processing
+            # Rate limited - use extended backoff for batch processing
             limit_type = self._identify_rate_limit_type(str(e))
             logger.warning(
-                f"SDK retries exhausted ({limit_type}), starting extended backoff for batch processing..."
+                f"Rate limited ({limit_type}), starting extended backoff..."
             )
 
         except openai.APIError as e:
-            # Non-rate-limit API errors - don't use extended backoff, just fail
-            logger.error(f"API error (SDK retries exhausted): {e}")
+            # Non-rate-limit API errors - fail immediately
+            logger.error(f"API error: {e}")
             raise
 
         # Extended backoff - for persistent rate limiting in batch scenarios
@@ -391,7 +369,7 @@ class PDFProcessor:
 
             try:
                 logger.info(f"API call [{call_type}]: sending request to {self.model} (extended backoff {i + 1})")
-                response = self.client.chat.completions.create(
+                response = await self.client.chat.completions.create(
                     model=self.model,
                     max_completion_tokens=self.max_tokens,
                     messages=messages,
