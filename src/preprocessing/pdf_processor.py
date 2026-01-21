@@ -1,8 +1,8 @@
 """
-PDF processing module using Claude's native PDF support.
+PDF processing module using OpenAI GPT 5.2's native PDF support.
 
-Sends PDFs directly to Claude API for extraction and structuring,
-bypassing pdfplumber's table extraction issues.
+Sends PDFs directly to GPT 5.2 API for extraction and structuring,
+leveraging its 400K context window and native PDF capabilities.
 """
 
 import asyncio
@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import anthropic
+import openai
+from openai import OpenAI
 from pypdf import PdfReader, PdfWriter
 
 from src.config.logging import get_logger
@@ -84,27 +85,30 @@ class ProcessedDocument:
 
 
 class PDFProcessor:
-    """Process PDFs using Claude's native PDF support."""
+    """Process PDFs using OpenAI GPT 5.2's native PDF support."""
 
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-sonnet-4-5",
+        model: str = "gpt-5.2",
         delay_between_calls: float = 1.0,
+        max_tokens: int = 32768,
     ) -> None:
         """
         Initialize the PDF processor.
 
         Args:
-            api_key: Anthropic API key
-            model: Claude model to use (should support PDF input)
+            api_key: OpenAI API key
+            model: OpenAI model to use (should support PDF input)
             delay_between_calls: Delay in seconds between API calls
+            max_tokens: Maximum output tokens (GPT 5.2 supports up to 128K)
         """
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.client = OpenAI(api_key=api_key)
         self.model = model
         self.delay_between_calls = delay_between_calls
-        self.max_pages_per_request = 100
-        self.max_file_size_mb = 32
+        self.max_tokens = max_tokens
+        self.max_pages_per_request = 100  # GPT 5.2 supports up to 100 pages
+        self.max_file_size_mb = 32  # GPT 5.2 supports up to 32MB
 
         # Total token tracking (across all PDFs)
         self._total_input_tokens = 0
@@ -226,7 +230,7 @@ class PDFProcessor:
             if verbose and len(pdf_chunks) > 1:
                 logger.info(f"Processing chunk {i}/{len(pdf_chunks)}")
 
-            chunk_markdown = await self._send_pdf_to_claude(
+            chunk_markdown = await self._send_pdf_to_gpt(
                 pdf_data=chunk_bytes,
                 system_prompt=PDF_EXTRACTION_PROMPT,
                 user_prompt=f"Extract and structure all content from this PDF document: {pdf_name}",
@@ -244,7 +248,7 @@ class PDFProcessor:
             api_calls=self._pdf_api_calls,
         )
 
-    async def _send_pdf_to_claude(
+    async def _send_pdf_to_gpt(
         self,
         pdf_data: bytes,
         system_prompt: str,
@@ -252,7 +256,7 @@ class PDFProcessor:
         retries: int = 3,
     ) -> str:
         """
-        Send PDF to Claude API using document type.
+        Send PDF to GPT 5.2 API using file input type.
 
         Args:
             pdf_data: PDF file bytes
@@ -263,20 +267,23 @@ class PDFProcessor:
         Returns:
             Response text from the API
         """
-        # Encode PDF as base64
+        # Encode PDF as base64 data URL
         pdf_base64 = base64.standard_b64encode(pdf_data).decode("utf-8")
 
-        # Build message with PDF document
+        # Build message with PDF file for GPT 5.2
         messages = [
+            {
+                "role": "developer",
+                "content": system_prompt,
+            },
             {
                 "role": "user",
                 "content": [
                     {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_base64,
+                        "type": "file",
+                        "file": {
+                            "filename": "document.pdf",
+                            "file_data": f"data:application/pdf;base64,{pdf_base64}",
                         },
                     },
                     {
@@ -284,23 +291,19 @@ class PDFProcessor:
                         "text": user_prompt,
                     },
                 ],
-            }
+            },
         ]
 
         return await self._call_with_extended_backoff(
             call_type="pdf_extract",
-            system_prompt=system_prompt,
             messages=messages,
-            max_tokens=16384,
             retries=retries,
         )
 
     async def _call_with_extended_backoff(
         self,
         call_type: str,
-        system_prompt: str,
         messages: list,
-        max_tokens: int,
         retries: int = 3,
     ) -> str:
         """
@@ -308,9 +311,7 @@ class PDFProcessor:
 
         Args:
             call_type: Type of call for logging
-            system_prompt: System prompt for the API call
-            messages: Messages list for the API call
-            max_tokens: Maximum tokens for response
+            messages: Messages list for the API call (includes developer message for system prompt)
             retries: Number of initial retries per attempt
 
         Returns:
@@ -322,23 +323,22 @@ class PDFProcessor:
         # Try with initial retries first
         for attempt in range(retries):
             try:
-                response = self.client.messages.create(
+                response = self.client.chat.completions.create(
                     model=self.model,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
+                    max_completion_tokens=self.max_tokens,
                     messages=messages,
                 )
 
                 self._log_api_call(
                     call_type,
-                    response.usage.input_tokens,
-                    response.usage.output_tokens,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
                 )
 
                 await asyncio.sleep(self.delay_between_calls)
-                return response.content[0].text
+                return response.choices[0].message.content
 
-            except anthropic.RateLimitError as e:
+            except openai.RateLimitError as e:
                 # Extract retry-after header if available
                 retry_after = None
                 if hasattr(e, "response") and e.response is not None:
@@ -357,7 +357,12 @@ class PDFProcessor:
                 )
                 await asyncio.sleep(wait_time)
 
-            except anthropic.APIError as e:
+            except openai.APIConnectionError as e:
+                logger.error(f"API connection error on attempt {attempt + 1}: {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(5 * (attempt + 1))
+
+            except openai.APIError as e:
                 logger.error(f"API error on attempt {attempt + 1}: {e}")
                 if attempt < retries - 1:
                     await asyncio.sleep(5 * (attempt + 1))
@@ -374,24 +379,23 @@ class PDFProcessor:
             await asyncio.sleep(delay)
 
             try:
-                response = self.client.messages.create(
+                response = self.client.chat.completions.create(
                     model=self.model,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
+                    max_completion_tokens=self.max_tokens,
                     messages=messages,
                 )
 
                 self._log_api_call(
                     call_type,
-                    response.usage.input_tokens,
-                    response.usage.output_tokens,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
                 )
 
                 logger.info("Extended backoff successful, resuming normal operation")
                 await asyncio.sleep(self.delay_between_calls)
-                return response.content[0].text
+                return response.choices[0].message.content
 
-            except anthropic.RateLimitError as e:
+            except openai.RateLimitError as e:
                 # Check if API provided a specific retry-after time
                 retry_after = None
                 if hasattr(e, "response") and e.response is not None:
@@ -409,7 +413,7 @@ class PDFProcessor:
                     )
                 continue
 
-            except anthropic.APIError as e:
+            except openai.APIError as e:
                 logger.error(f"API error during extended backoff: {e}")
                 continue
 
