@@ -19,9 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from pypdf import PdfReader
 
 from src.config.logging import get_logger, setup_logging
 from src.preprocessing.pdf_processor import (
+    ChunkJob,
+    ChunkResult,
+    ContentFilterError,
     PDFProcessor,
     PersistentRateLimitError,
     get_document_output_path,
@@ -403,7 +407,7 @@ async def main(
         api_key=api_key,
         model=config.get("model", "gpt-5.2"),
         delay_between_calls=config.get("delay_between_calls", 1.0),
-        max_tokens=config.get("max_tokens", 32768),
+        max_tokens=config.get("max_tokens", 65536),
     )
 
     # Discover PDFs
@@ -446,54 +450,155 @@ async def main(
     if ask:
         print("\n[INTERACTIVE MODE - You will be prompted before each PDF]\n")
 
-    # Process each PDF
-    results = []
+    # Collect PDFs to process (with interactive filtering)
+    pdfs_to_process: list[Path] = []
+    results: list[dict[str, Any]] = []
     rate_limit_stopped = False
     process_all = False  # Set to True when user selects 'all remaining'
 
+    for i, pdf in enumerate(pdfs, start=1):
+        # Interactive mode: prompt before processing
+        if ask and not process_all:
+            output_path = get_document_output_path(pdf.name)
+            response = prompt_for_pdf(pdf.name, output_path, i, len(pdfs))
+
+            if response == "q":
+                print("\nQuitting. Progress saved.")
+                break
+            elif response == "s":
+                print("  Skipped by user")
+                results.append({
+                    "pdf": pdf.name,
+                    "status": "skipped",
+                    "reason": "user skipped",
+                    "pages": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "api_calls": 0,
+                })
+                continue
+            elif response == "a":
+                process_all = True
+                print("  Processing all remaining PDFs...")
+            # response == "y" falls through to process
+
+        pdfs_to_process.append(pdf)
+
+    if not pdfs_to_process:
+        print("No PDFs selected for processing.")
+        # Generate index and print summary even if nothing processed
+        if not dry_run:
+            generate_index(output_dir)
+        print_summary(results, processor)
+        return
+
+    # Dry run: just count pages
+    if dry_run:
+        for pdf in pdfs_to_process:
+            reader = PdfReader(pdf)
+            result = {
+                "pdf": pdf.name,
+                "pages": len(reader.pages),
+                "output_files": [],
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "api_calls": 0,
+            }
+            results.append(result)
+            logger.info(f"  [DRY RUN] Would process {pdf.name} ({result['pages']} pages)")
+            logger.info(f"  [DRY RUN] Would write to: {get_document_output_path(pdf.name)}")
+
+        # Generate index and print summary
+        generate_index(output_dir)
+        print_summary(results, processor)
+        return
+
+    # Collect all chunk jobs from all PDFs
+    all_jobs: list[ChunkJob] = []
+    pdf_page_counts: dict[str, int] = {}
+
+    print("\nPreparing chunks for parallel processing...")
+    for pdf in pdfs_to_process:
+        reader = PdfReader(pdf)
+        pdf_page_counts[pdf.name] = len(reader.pages)
+
+        jobs = processor.prepare_chunks(pdf)
+        all_jobs.extend(jobs)
+        print(f"  {pdf.name}: {len(jobs)} chunk(s), {pdf_page_counts[pdf.name]} pages")
+
+    print(f"\nTotal: {len(all_jobs)} chunks from {len(pdfs_to_process)} PDFs")
+    print("Processing with 3-way concurrency...\n")
+
     try:
-        for i, pdf in enumerate(pdfs, start=1):
-            # Interactive mode: prompt before processing
-            if ask and not process_all:
-                output_path = get_document_output_path(pdf.name)
-                response = prompt_for_pdf(pdf.name, output_path, i, len(pdfs))
+        # Process all chunks with 3-way concurrency
+        chunk_results = await processor.process_chunks_parallel(all_jobs, max_concurrent=3)
 
-                if response == "q":
-                    print("\nQuitting. Progress saved.")
-                    break
-                elif response == "s":
-                    print("  Skipped by user")
-                    results.append({
-                        "pdf": pdf.name,
-                        "status": "skipped",
-                        "reason": "user skipped",
-                        "pages": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "api_calls": 0,
-                    })
-                    continue
-                elif response == "a":
-                    process_all = True
-                    print("  Processing all remaining PDFs...")
-                # response == "y" falls through to process
+        # Group results by PDF and combine markdown
+        pdf_chunks: dict[str, list[ChunkResult]] = {}
+        for result in chunk_results:
+            pdf_chunks.setdefault(result.pdf_name, []).append(result)
 
-            if not ask:
-                print(f"\n[{i}/{len(pdfs)}] {pdf.name}")
+        # Process each PDF's results
+        for pdf in pdfs_to_process:
+            pdf_name = pdf.name
+            chunks = pdf_chunks.get(pdf_name, [])
 
-            result = await process_single_pdf(
-                pdf_path=pdf,
-                output_dir=output_dir,
-                processor=processor,
-                dry_run=dry_run,
-                verbose=verbose,
-            )
+            # Sort by chunk index
+            chunks.sort(key=lambda r: r.chunk_index)
+
+            # Check for errors
+            errors = [c for c in chunks if c.error]
+            if errors:
+                logger.error(f"Errors processing {pdf_name}:")
+                for err in errors:
+                    logger.error(f"  Chunk {err.chunk_index + 1}: {err.error}")
+
+                results.append({
+                    "pdf": pdf_name,
+                    "pages": pdf_page_counts.get(pdf_name, 0),
+                    "output_files": [],
+                    "input_tokens": sum(c.input_tokens for c in chunks),
+                    "output_tokens": sum(c.output_tokens for c in chunks),
+                    "api_calls": len(chunks),
+                    "error": f"{len(errors)} chunk(s) failed",
+                })
+                continue
+
+            # Combine markdown from all chunks
+            combined_markdown = "\n\n".join(c.markdown for c in chunks if c.markdown)
+
+            # Write to output file
+            output_path_rel = get_document_output_path(pdf_name)
+            output_path = output_dir / output_path_rel
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            was_added = _append_to_file(output_path, combined_markdown, pdf_name)
+
+            result = {
+                "pdf": pdf_name,
+                "pages": pdf_page_counts.get(pdf_name, 0),
+                "output_files": [output_path_rel] if was_added else [],
+                "input_tokens": sum(c.input_tokens for c in chunks),
+                "output_tokens": sum(c.output_tokens for c in chunks),
+                "api_calls": len(chunks),
+            }
+
+            if not was_added:
+                result["status"] = "skipped"
+                result["reason"] = "duplicate content"
+
             results.append(result)
 
             # Update manifest after each PDF (for resume support)
-            if not dry_run and result.get("status") != "skipped":
-                mark_pdf_processed(manifest, pdf, result)
-                save_manifest(output_dir, manifest)
+            mark_pdf_processed(manifest, pdf, result)
+            save_manifest(output_dir, manifest)
+
+            logger.info(
+                f"PDF complete: {pdf_name} | "
+                f"{len(chunks)} chunks | "
+                f"{result['input_tokens']:,} input tokens | "
+                f"{result['output_tokens']:,} output tokens"
+            )
 
     except PersistentRateLimitError as e:
         rate_limit_stopped = True
@@ -502,14 +607,13 @@ async def main(
         print("RATE LIMIT - STOPPING")
         print("=" * 60)
         print(f"\nProcessed {len(results)} PDFs before rate limit.")
-        print(f"Remaining: {len(pdfs) - len(results)} PDFs")
+        print(f"Remaining: {len(pdfs_to_process) - len(results)} PDFs")
         print("\nProgress saved. Resume with:")
         print("  python -m src.preprocessing.run_preprocessing")
         print("=" * 60)
 
         # Save manifest for any partial progress
-        if not dry_run:
-            save_manifest(output_dir, manifest)
+        save_manifest(output_dir, manifest)
 
     # Generate index
     if not dry_run:
