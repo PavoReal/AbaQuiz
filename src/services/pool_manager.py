@@ -100,7 +100,11 @@ class PoolManager:
     def __init__(self) -> None:
         self.settings = get_settings()
         # Use AsyncAnthropic for non-blocking API calls
-        self.client = AsyncAnthropic(api_key=self.settings.anthropic_api_key)
+        # SDK automatically retries 429/5xx with exponential backoff + jitter
+        self.client = AsyncAnthropic(
+            api_key=self.settings.anthropic_api_key,
+            max_retries=5,  # Increased from default 2
+        )
 
         # Load concurrency settings from config
         self.max_concurrent_generation = self.settings.pool_max_concurrent_generation
@@ -545,30 +549,10 @@ class PoolManager:
                     return False
 
             except anthropic.RateLimitError as e:
-                # On rate limit, wait and retry once
-                logger.warning(f"Dedup rate limited, waiting 5s: {e}")
-                await asyncio.sleep(5)
-                try:
-                    async with self._dedup_semaphore:
-                        response = await self.client.messages.create(
-                            model=self.dedup_model,
-                            max_tokens=256,
-                            messages=[{"role": "user", "content": prompt}],
-                        )
-                    # Process response same as above
-                    content_block = response.content[0]
-                    if hasattr(content_block, "text"):
-                        result = self._parse_dedup_result(content_block.text)
-                        if result and result.get("is_duplicate"):
-                            confidence = result.get("confidence", "high")
-                            if confidence == "high" or (
-                                confidence == "medium"
-                                and self.dedup_confidence_threshold != "high"
-                            ):
-                                return True
-                except Exception:
-                    pass
-                consecutive_clean += 1
+                # SDK retries exhausted (5 attempts with exponential backoff + jitter)
+                # Allow question to proceed rather than blocking the pipeline
+                logger.warning(f"Dedup rate limit (SDK retries exhausted): {e}")
+                return False
 
             except Exception as e:
                 # Log warning but don't block on dedup failure

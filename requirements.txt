@@ -4,6 +4,9 @@ python-telegram-bot>=20.0
 # Anthropic Claude API
 anthropic>=0.18.0
 
+# OpenAI API (GPT 5.2 for preprocessing and question generation)
+openai>=1.0.0
+
 # Scheduling
 apscheduler>=3.10.0
 

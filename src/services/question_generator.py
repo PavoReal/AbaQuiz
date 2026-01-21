@@ -5,7 +5,6 @@ Generates BCBA exam questions from pre-processed content.
 Uses AsyncOpenAI client with structured outputs for reliable JSON responses.
 """
 
-import asyncio
 import json
 import random
 from enum import Enum
@@ -308,14 +307,14 @@ Philosophical Underpinnings - Key topics to assess:
 class QuestionGenerator:
     """Generates quiz questions using OpenAI GPT 5.2 API with async support."""
 
-    # Retry configuration
-    MAX_RETRIES = 3
-    RETRY_DELAYS = [1, 3, 10]  # Seconds between retries
-
     def __init__(self) -> None:
         self.settings = get_settings()
-        # Use AsyncOpenAI for non-blocking API calls
-        self.client = AsyncOpenAI(api_key=self.settings.openai_api_key)
+        # Use AsyncOpenAI with built-in retries (exponential backoff with jitter)
+        # SDK handles 429/5xx errors automatically
+        self.client = AsyncOpenAI(
+            api_key=self.settings.openai_api_key,
+            max_retries=5,  # Increased from default 2
+        )
         # Use absolute path from project root
         self.processed_content_dir = Path(__file__).parent.parent.parent / "data" / "processed"
         # Content cache to avoid repeated file reads
@@ -424,7 +423,10 @@ class QuestionGenerator:
         create_func,
         **kwargs,
     ) -> Any:
-        """Call API with retry logic for transient failures.
+        """Call API - SDK handles retries automatically.
+
+        The OpenAI SDK (max_retries=5) handles rate limits and transient errors
+        with exponential backoff and jitter. We just need to catch and log final errors.
 
         Args:
             create_func: The async API function to call
@@ -434,43 +436,9 @@ class QuestionGenerator:
             API response
 
         Raises:
-            openai.APIError: If all retries fail
+            openai.APIError: If SDK retries are exhausted
         """
-        last_error = None
-
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                return await create_func(**kwargs)
-            except openai.RateLimitError as e:
-                last_error = e
-                if attempt < self.MAX_RETRIES - 1:
-                    delay = self.RETRY_DELAYS[attempt]
-                    logger.warning(
-                        f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
-                    )
-                    await asyncio.sleep(delay)
-            except openai.APIConnectionError as e:
-                last_error = e
-                if attempt < self.MAX_RETRIES - 1:
-                    delay = self.RETRY_DELAYS[attempt]
-                    logger.warning(
-                        f"Connection error, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
-                    )
-                    await asyncio.sleep(delay)
-            except openai.APIStatusError as e:
-                # Don't retry on 4xx errors (except rate limit)
-                if 400 <= e.status_code < 500 and e.status_code != 429:
-                    raise
-                last_error = e
-                if attempt < self.MAX_RETRIES - 1:
-                    delay = self.RETRY_DELAYS[attempt]
-                    logger.warning(
-                        f"API error {e.status_code}, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
-                    )
-                    await asyncio.sleep(delay)
-
-        # All retries exhausted
-        raise last_error  # type: ignore
+        return await create_func(**kwargs)
 
     async def generate_question(
         self,

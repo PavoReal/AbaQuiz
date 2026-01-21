@@ -30,6 +30,7 @@ class Settings:
         # Required environment variables
         self.telegram_bot_token = self._require_env("TELEGRAM_BOT_TOKEN")
         self.anthropic_api_key = self._require_env("ANTHROPIC_API_KEY")
+        self.openai_api_key = self._require_env("OPENAI_API_KEY")
 
         # Optional environment variables with defaults
         self.database_path = os.getenv("DATABASE_PATH", "./data/abaquiz.db")
@@ -71,7 +72,17 @@ class Settings:
             "type_distribution",
             {"multiple_choice": 0.8, "true_false": 0.2},
         )
+        # Legacy Claude model setting (for user responses)
         self.claude_model = gen_config.get("model", "claude-sonnet-4-5")
+        # OpenAI model for question generation (GPT 5.2)
+        self.openai_model = gen_config.get("openai_model", "gpt-5.2")
+        self.generation_max_tokens = gen_config.get("max_tokens", 8192)
+
+        # Preprocessing settings
+        preprocess_config = self._config.get("preprocessing", {})
+        self.preprocessing_model = preprocess_config.get("model", "gpt-5.2")
+        self.preprocessing_max_tokens = preprocess_config.get("max_tokens", 32768)
+        self.preprocessing_delay = preprocess_config.get("delay_between_calls", 1.2)
 
         # Question selection
         sel_config = self._config.get("question_selection", {})
@@ -171,8 +182,13 @@ class Settings:
         return telegram_id in self.admin_users
 
     def get_model_pricing(self, model: str) -> dict[str, float] | None:
-        """Get pricing info for a model."""
-        return self.pricing.get("anthropic", {}).get(model)
+        """Get pricing info for a model (Anthropic or OpenAI)."""
+        # Check Anthropic models first
+        anthropic_pricing = self.pricing.get("anthropic", {}).get(model)
+        if anthropic_pricing:
+            return anthropic_pricing
+        # Check OpenAI models
+        return self.pricing.get("openai", {}).get(model)
 
 
 # Global settings instance
