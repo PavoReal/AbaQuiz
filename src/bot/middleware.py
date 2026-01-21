@@ -4,10 +4,12 @@ Middleware decorators for AbaQuiz bot handlers.
 Provides access control, rate limiting, and filtering.
 """
 
+import json
 import random
 import time
 from collections import defaultdict
 from functools import wraps
+from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
 from telegram import Update
@@ -19,8 +21,53 @@ from src.database.repository import get_repository
 
 logger = get_logger(__name__)
 
+# Rate limit persistence
+RATE_LIMIT_FILE = Path("data/.rate_limits.json")
+_rate_limit_save_counter = 0
+
+
+def _load_rate_limits() -> dict[int, list[float]]:
+    """Load rate limits from file."""
+    if not RATE_LIMIT_FILE.exists():
+        return defaultdict(list)
+    try:
+        with open(RATE_LIMIT_FILE) as f:
+            data = json.load(f)
+        # Convert string keys back to int and filter stale entries
+        now = time.time()
+        minute_ago = now - 60
+        result: dict[int, list[float]] = defaultdict(list)
+        for k, v in data.items():
+            filtered = [ts for ts in v if ts > minute_ago]
+            if filtered:
+                result[int(k)] = filtered
+        return result
+    except (json.JSONDecodeError, IOError, ValueError) as e:
+        logger.debug(f"Could not load rate limits: {e}")
+        return defaultdict(list)
+
+
+def _save_rate_limits(cache: dict[int, list[float]]) -> None:
+    """Save rate limits to file (only recent entries)."""
+    try:
+        RATE_LIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Only save recent entries (last minute)
+        now = time.time()
+        minute_ago = now - 60
+        cleaned = {
+            str(k): [ts for ts in v if ts > minute_ago]
+            for k, v in cache.items()
+            if any(ts > minute_ago for ts in v)
+        }
+        with open(RATE_LIMIT_FILE, "w") as f:
+            json.dump(cleaned, f)
+    except IOError as e:
+        logger.debug(f"Could not save rate limits: {e}")
+
+
 # Rate limit tracking: {user_id: [timestamps]}
-_rate_limit_cache: dict[int, list[float]] = defaultdict(list)
+# Load persisted rate limits on module init
+_rate_limit_cache: dict[int, list[float]] = _load_rate_limits()
 
 
 def dm_only_middleware(
@@ -115,6 +162,8 @@ def rate_limit_middleware(
             *args: Any,
             **kwargs: Any,
         ) -> Any:
+            global _rate_limit_save_counter
+
             if not update.effective_user:
                 return None
 
@@ -134,6 +183,9 @@ def rate_limit_middleware(
             if len(_rate_limit_cache[user_id]) >= limit:
                 logger.warning(f"Rate limit exceeded for user {user_id}")
 
+                # Save on rate limit hit
+                _save_rate_limits(_rate_limit_cache)
+
                 if update.effective_message:
                     await update.effective_message.reply_text(
                         "You're sending too many requests. Please slow down."
@@ -142,6 +194,12 @@ def rate_limit_middleware(
 
             # Record this request
             _rate_limit_cache[user_id].append(now)
+
+            # Save every 10 requests (debounced)
+            _rate_limit_save_counter += 1
+            if _rate_limit_save_counter >= 10:
+                _save_rate_limits(_rate_limit_cache)
+                _rate_limit_save_counter = 0
 
             return await func(update, context, *args, **kwargs)
 
