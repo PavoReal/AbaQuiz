@@ -100,10 +100,9 @@ class PoolManager:
     def __init__(self) -> None:
         self.settings = get_settings()
         # Use AsyncAnthropic for non-blocking API calls
-        # SDK automatically retries 429/5xx with exponential backoff + jitter
         self.client = AsyncAnthropic(
             api_key=self.settings.anthropic_api_key,
-            max_retries=5,  # Increased from default 2
+            max_retries=1,
         )
 
         # Load concurrency settings from config
