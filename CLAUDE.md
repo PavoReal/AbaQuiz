@@ -1,162 +1,191 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Quick reference for Claude Code working with this repository. Keep this concise - see linked docs for details.
 
-## Documentation Structure
+## Documentation Map
 
-| Document | Purpose |
-|----------|---------|
-| `IDEA.md` | Brief concept statement - the "what" and "why" in 2-3 sentences |
-| `DESIGN.md` | Complete technical specification - architecture, database schema, features, algorithms, configuration. The "how" in full detail. Reference this for implementation decisions. |
-| `PLAN.md` | Phased implementation plan - task breakdown, dependencies, order of work. Track progress here. |
-| `CLAUDE.md` | Quick reference for Claude Code - commands, architecture summary, key patterns |
-
-When implementing features, consult DESIGN.md for specifications and update PLAN.md to track progress.
-
-## Project Overview
-
-AbaQuiz is a Telegram bot for BCBA exam preparation. It delivers daily Applied Behavior Analysis (ABA) quiz questions using Claude AI to generate questions from pre-processed BCBA study materials.
+| Doc | Purpose |
+|-----|---------|
+| `IDEA.md` | Concept statement (2-3 sentences) |
+| `DESIGN.md` | Full technical spec - consult for implementation decisions |
+| `PLAN.md` | Phased implementation - track progress here |
+| `docs/CLI_TOOLS.md` | Detailed CLI command reference |
+| `docs/preprocessing_guide.md` | PDF preprocessing details |
 
 ## Tech Stack
 
-- Python 3.11+ with python-telegram-bot v20+
-- Anthropic Claude API for question generation
-- SQLite with aiosqlite for async database operations
-- APScheduler for scheduled quiz delivery
-- pdfplumber for PDF preprocessing
-- Docker for deployment
-
-## Development Environment
-
-Always use the virtual environment (`.venv`) for all Python-related commands:
-
-```bash
-# Activate virtual environment
-source .venv/bin/activate
-
-# Or prefix commands with .venv/bin/
-.venv/bin/python -m src.main
-```
+- **Python 3.14+** with python-telegram-bot v20+
+- **Claude claude-sonnet-4-5** for question generation (configurable in config.json)
+- **Claude Haiku** for deduplication checks
+- **SQLite + aiosqlite** for async database
+- **APScheduler** for scheduled delivery
+- **aiohttp + Jinja2 + HTMX** for web admin interface
+- **Native PDF support** via Anthropic API (not pdfplumber)
+- **Docker** for deployment
 
 ## Commands
 
 ```bash
-# Run the bot
+# Always use the venv
+source .venv/bin/activate
+
+# Run bot
 .venv/bin/python -m src.main
 
-# Run the web admin interface
+# Run web admin only (port 8070)
 .venv/bin/python -m src.main --web-only
 
-# Run preprocessing on BCBA PDFs (one-time)
+# Database inspection
+.venv/bin/python -m src.main --db-stats           # Pool statistics
+.venv/bin/python -m src.main --db-list --limit 20 # Recent questions
+.venv/bin/python -m src.main --db-show 123        # Show question by ID
+.venv/bin/python -m src.main --db-validate        # Validate integrity
+.venv/bin/python -m src.main --json               # JSON output mode
+
+# Seed questions
+.venv/bin/python -m src.scripts.seed_questions --count 250
+.venv/bin/python -m src.scripts.seed_questions --dry-run      # Cost estimate
+.venv/bin/python -m src.scripts.seed_questions --resume       # Continue seeding
+
+# Preprocessing (one-time)
 .venv/bin/python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
 
-# Run tests
+# Tests
 .venv/bin/pytest tests/
-
-# Run single test file
-.venv/bin/pytest tests/test_handlers.py
-
-# Docker
-docker-compose up --build
+.venv/bin/pytest tests/test_handlers.py -v
 ```
 
 ## Architecture
 
 ### Core Flow
-1. **Scheduler** triggers at 8 AM/PM per user timezone
-2. **Question Generator** loads content from `data/processed/*.md`, calls Claude API
-3. **Bot Handler** sends question with inline keyboard buttons
-4. **Callback Handler** processes answer, updates stats, awards points/achievements
+1. **Scheduler** → triggers at 8 AM/PM per user timezone
+2. **Pool Manager** → checks threshold, triggers batch generation if needed
+3. **Question Generator** → loads `data/processed/*.md`, calls Claude API
+4. **Bot Handler** → sends question with inline keyboard
+5. **Callback Handler** → processes answer, updates stats, awards achievements
+
+### Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `src/bot/handlers.py` | User commands (/start, /quiz, /stats) |
+| `src/bot/admin_handlers.py` | Admin commands (/ban, /broadcast, /usage) |
+| `src/bot/middleware.py` | DM-only, ban check, rate limiting decorators |
+| `src/services/question_generator.py` | Claude API integration |
+| `src/services/pool_manager.py` | Threshold checks, BCBA weights, dedup |
+| `src/services/scheduler.py` | APScheduler job setup |
+| `src/services/content_validator.py` | Validates MD files at startup |
+| `src/services/usage_tracker.py` | API cost tracking with cache pricing |
+| `src/database/repository.py` | All async DB operations |
+| `src/database/migrations.py` | Schema versioning |
+| `src/config/constants.py` | ContentArea enums, achievements, aliases |
+
+### Web Admin Interface
+
+Located in `src/web/`. Routes:
+- `/` - Dashboard with pool stats
+- `/tables` - Database browser
+- `/tables/{name}` - Table with search/sort/pagination
+- `/questions` - Question pool cards
+- `/review` - Question quality review
+- `/generation` - Real-time generation with progress tracking
+
+Tech: aiohttp server + Jinja2 templates + HTMX for reactivity + Tailwind CSS
 
 ### Middleware Stack
-All handlers use decorator-based middleware in order:
 ```python
 @dm_only_middleware        # Ignore group chats
 @ban_check_middleware      # Block banned users
 @rate_limit_middleware     # Throttle requests
 ```
 
-### Key Modules
-- `src/bot/handlers.py` - User command handlers (/start, /quiz, /stats)
-- `src/bot/admin_handlers.py` - Admin commands (/ban, /broadcast, /usage)
-- `src/bot/middleware.py` - Request filtering and access control
-- `src/services/question_generator.py` - Claude API integration
-- `src/services/scheduler.py` - APScheduler job setup
-- `src/database/repository.py` - All database operations
-- `src/gamification/` - Streaks, points, achievements logic
+## Configuration
 
-### Configuration
-- Secrets in `.env` (TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY)
-- Settings in `config/config.json` (admin_users, rate limits, pricing)
-- Config supports `${ENV_VAR}` substitution
+| File | Contents |
+|------|----------|
+| `.env` | Secrets: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY |
+| `config/config.json` | All settings (supports `${ENV_VAR}` substitution) |
 
-### Database Tables
-- `users` - Telegram users and subscription status
-- `questions` - Generated quiz questions
+Key config sections:
+- `question_generation.model` - Claude model for generation
+- `pool_management.threshold` - Min unseen questions per active user (default: 20)
+- `pool_management.BCBA_WEIGHTS` - Distribution across 9 content areas
+- `pricing` - Token costs for Sonnet/Haiku including cache pricing
+
+## Database
+
+Core tables:
+- `users` - Telegram users, timezone, focus_preferences (JSON)
+- `questions` - Generated questions with model tracking
 - `user_answers` - Answer history
 - `user_stats` - Points, streaks
 - `achievements` - Unlocked badges
-- `banned_users`, `admin_settings`, `api_usage` - Admin features
 
-## PDF Preprocessing Pipeline
+Admin tables:
+- `banned_users`, `admin_settings`, `api_usage`
+- `sent_questions` - With is_scheduled flag
+- `question_reports` - User-reported issues
+- `question_stats` - Question performance metrics
+- `question_reviews` - Admin quality reviews
 
-BCBA study PDFs go through a hybrid extraction process:
-1. **Python extraction** (pdfplumber) - Extract text and tables
-2. **Claude cleanup** (one-time) - Structure into markdown with proper headers
-3. Output saved to `data/processed/` organized by BCBA Task List content area
+Schema migrations managed in `src/database/migrations.py`
 
 ## Question Generation
 
-Questions are generated by loading relevant markdown content into Claude's context and requesting structured JSON output with question, options, correct_answer, explanation, and content_area fields.
+### Categories
+- **Scenario-based (40%)** - Clinical vignettes
+- **Definition/Concept (30%)** - Key terms
+- **Application (30%)** - Novel situations
 
-### Question Categories
-Questions are generated with variety using three categories:
-- **Scenario-based (40%)**: Clinical vignettes requiring application of knowledge
-- **Definition/Concept (30%)**: Key terms and principles testing
-- **Application (30%)**: Novel situations requiring transfer of learning
+### Pool Management
+- Generate when avg unseen questions per active user < 20
+- Active user = answered in last 7 days
+- Batch size: 50 questions
+- Dedup: Haiku checks against 50 most recent in same content area
 
-### Question Pool Management
-
-The pool manager (`src/services/pool_manager.py`) uses an active-user-based threshold system:
-
-**Threshold Check**: Generate when avg unseen questions per active user < 20 (configurable)
-- Active user = answered a question in the last 7 days
-- Batch size = 50 questions when threshold is hit
-- Distribution follows BCBA exam weights across 9 content areas
-
-**Deduplication**: Uses Claude Haiku to check new questions against existing pool:
-- Checks against same content area (50 most recent questions)
-- Batches 5 existing questions per Haiku call for efficiency
-- Skips dedup if Haiku call fails (logs warning, adds question anyway)
-
-### Seeding Script
-
-Seed initial questions with the CLI script:
-
+### Seeding
 ```bash
-# Generate 250 questions distributed by BCBA exam weights
-python -m src.scripts.seed_questions --count 250
+# Full seed with cost estimate
+.venv/bin/python -m src.scripts.seed_questions --dry-run
 
-# Generate for specific content area only
-python -m src.scripts.seed_questions --area "Ethics" --count 50
+# Generate 250 distributed by BCBA weights
+.venv/bin/python -m src.scripts.seed_questions --count 250
 
-# Preview plan without generating (shows cost estimate)
-python -m src.scripts.seed_questions --dry-run
-
-# Fill gaps to reach target count
-python -m src.scripts.seed_questions --resume --count 300
+# Resume interrupted seeding (uses state file)
+.venv/bin/python -m src.scripts.seed_questions --resume
 ```
 
-**Cost Estimate** (Claude 4.5 pricing, Jan 2026):
-- Initial seed (250 questions): ~$11 (with dedup)
-- Weekly batch (50 questions): ~$2.50 (with dedup)
+## PDF Preprocessing
+
+Uses **Claude's native PDF support** - sends PDFs directly to API (not pdfplumber extraction).
+
+Pipeline:
+1. Load PDF from `data/raw/`
+2. Send to Claude API for structured markdown extraction
+3. Output to `data/processed/{area}/` organized by BCBA content area
+
+Output directories: `core/`, `ethics/`, `supervision/`, `reference/`
 
 ## Key Design Decisions
 
-- **Question Pool**: Pre-generated and cached, batch refreshed daily (not generated on-demand)
-- **Question Selection**: Hybrid - mostly random, 1-in-5 targets user weak areas (configurable)
-- **Streaks**: Day-based - answer at least one question per day to maintain
-- **Question Expiration**: None - users can answer old questions anytime
-- **Onboarding**: Guided flow (timezone → focus areas → how-it-works → first question)
-- **Privacy**: No leaderboards - individual progress only
-- **Error Handling**: Retry 3x with backoff, notify admins on failure, never show errors to users
+- **Pre-generated pool** - Batch refreshed, not on-demand
+- **Hybrid question selection** - Mostly random, 1-in-5 targets weak areas
+- **Day-based streaks** - One question/day maintains streak
+- **No question expiration** - Users can answer anytime
+- **Privacy first** - No leaderboards, individual progress only
+- **Error handling** - Retry 3x with backoff, notify admins, never show errors to users
+
+## Code Style
+
+- Async-first with `aiosqlite` for all DB operations
+- Type hints on all function signatures
+- Decorators for middleware (applied in order)
+- JSON fields for flexible user preferences
+- Config-driven behavior (avoid hardcoding)
+
+## Important Files
+
+- `data/abaquiz.db` - Production database (never delete)
+- `data/.seed_progress.json` - Seeding state for resume (auto-managed)
+- `config/config.json` - All runtime configuration
+- `data/processed/` - Required markdown content (validated at startup)
