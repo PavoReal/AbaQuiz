@@ -11,7 +11,6 @@ import io
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import openai
 from openai import AsyncOpenAI
@@ -49,7 +48,6 @@ Your task:
 6. Fix any OCR artifacts or formatting issues if present
 
 Output clean markdown only. No commentary or explanations."""
-
 
 
 @dataclass
@@ -468,16 +466,14 @@ class PDFProcessor:
         return chunks
 
 
-def get_document_output_path(pdf_name: str) -> str | None:
-    """
-    Get output path for a document.
+def get_document_output_path(pdf_name: str) -> str:
+    """Convert PDF filename to markdown output path (1:1 mapping).
 
     Args:
-        pdf_name: Name of the PDF file
+        pdf_name: Name of the PDF file (e.g., "foo.pdf")
 
     Returns:
-        Output path if document should be processed, None if should be skipped
+        Output path as markdown file (e.g., "foo.md")
     """
-    if pdf_name in SKIP_DOCUMENTS:
-        return None  # Skip this document
-    return BCBA_DOCUMENTS.get(pdf_name)
+    stem = Path(pdf_name).stem
+    return f"{stem}.md"

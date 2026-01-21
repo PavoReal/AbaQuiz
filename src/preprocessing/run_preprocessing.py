@@ -185,12 +185,7 @@ async def process_single_pdf(
     Returns dict with processing stats.
     """
     pdf_name = pdf_path.name
-
-    # Check if this document should be skipped
     output_path_rel = get_document_output_path(pdf_name)
-    if output_path_rel is None:
-        logger.info(f"Skipping {pdf_name} (not BCBA exam material)")
-        return {"pdf": pdf_name, "status": "skipped", "reason": "not BCBA material"}
 
     logger.info(f"Processing: {pdf_name}")
 
