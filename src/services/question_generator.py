@@ -1,8 +1,8 @@
 """
-Question generation service using Claude API.
+Question generation service using OpenAI GPT 5.2 API.
 
 Generates BCBA exam questions from pre-processed content.
-Uses AsyncAnthropic client with structured outputs for reliable JSON responses.
+Uses AsyncOpenAI client with structured outputs for reliable JSON responses.
 """
 
 import asyncio
@@ -12,8 +12,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-import anthropic
-from anthropic import AsyncAnthropic, transform_schema
+import openai
+from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from src.config.constants import ContentArea, QuestionType
@@ -306,7 +306,7 @@ Philosophical Underpinnings - Key topics to assess:
 
 
 class QuestionGenerator:
-    """Generates quiz questions using Claude API with async support."""
+    """Generates quiz questions using OpenAI GPT 5.2 API with async support."""
 
     # Retry configuration
     MAX_RETRIES = 3
@@ -314,8 +314,8 @@ class QuestionGenerator:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        # Use AsyncAnthropic for non-blocking API calls
-        self.client = AsyncAnthropic(api_key=self.settings.anthropic_api_key)
+        # Use AsyncOpenAI for non-blocking API calls
+        self.client = AsyncOpenAI(api_key=self.settings.openai_api_key)
         # Use absolute path from project root
         self.processed_content_dir = Path(__file__).parent.parent.parent / "data" / "processed"
         # Content cache to avoid repeated file reads
@@ -434,14 +434,14 @@ class QuestionGenerator:
             API response
 
         Raises:
-            anthropic.APIError: If all retries fail
+            openai.APIError: If all retries fail
         """
         last_error = None
 
         for attempt in range(self.MAX_RETRIES):
             try:
                 return await create_func(**kwargs)
-            except anthropic.RateLimitError as e:
+            except openai.RateLimitError as e:
                 last_error = e
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
@@ -449,7 +449,7 @@ class QuestionGenerator:
                         f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
                     )
                     await asyncio.sleep(delay)
-            except anthropic.APIConnectionError as e:
+            except openai.APIConnectionError as e:
                 last_error = e
                 if attempt < self.MAX_RETRIES - 1:
                     delay = self.RETRY_DELAYS[attempt]
@@ -457,7 +457,7 @@ class QuestionGenerator:
                         f"Connection error, retrying in {delay}s (attempt {attempt + 1}/{self.MAX_RETRIES})"
                     )
                     await asyncio.sleep(delay)
-            except anthropic.APIStatusError as e:
+            except openai.APIStatusError as e:
                 # Don't retry on 4xx errors (except rate limit)
                 if 400 <= e.status_code < 500 and e.status_code != 429:
                     raise
@@ -539,27 +539,32 @@ Generate a challenging but fair exam-style question that matches the requested s
 Include a source_citation with the specific section, heading, and a brief quote from the study content that this question is based on."""
 
         try:
-            # Use structured outputs for guaranteed valid JSON
+            # Use structured outputs for guaranteed valid JSON (GPT 5.2)
             response = await self._call_api_with_retry(
-                self.client.beta.messages.create,
-                model=self.settings.claude_model,
-                max_tokens=1024,
-                betas=["structured-outputs-2025-11-13"],
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-                output_format={
+                self.client.chat.completions.create,
+                model=self.settings.openai_model,
+                max_completion_tokens=self.settings.generation_max_tokens,
+                messages=[
+                    {"role": "developer", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={
                     "type": "json_schema",
-                    "schema": transform_schema(GeneratedQuestion),
+                    "json_schema": {
+                        "name": "generated_question",
+                        "strict": True,
+                        "schema": GeneratedQuestion.model_json_schema(),
+                    },
                 },
             )
 
             # Parse guaranteed-valid JSON response
-            content_block = response.content[0]
-            if not hasattr(content_block, "text"):
-                logger.error("Response has no text content")
+            response_content = response.choices[0].message.content
+            if not response_content:
+                logger.error("Response has no content")
                 return None
 
-            question_data = json.loads(content_block.text)
+            question_data = json.loads(response_content)
 
             # Normalize options - filter out None values
             raw_opts = question_data.get("options", {})
@@ -569,18 +574,18 @@ Include a source_citation with the specific section, heading, and a brief quote 
             # Add metadata
             question_data["content_area"] = content_area.value
             question_data["category"] = question_category.value
-            question_data["model"] = self.settings.claude_model
+            question_data["model"] = self.settings.openai_model
 
             # Log usage
             logger.info(
                 f"Generated {question_category.value} question for {content_area.value}: "
-                f"{response.usage.input_tokens} in, {response.usage.output_tokens} out"
+                f"{response.usage.prompt_tokens} in, {response.usage.completion_tokens} out"
             )
 
             return question_data
 
-        except anthropic.APIError as e:
-            logger.error(f"Claude API error: {e}")
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {e}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error (unexpected with structured outputs): {e}")
         except Exception as e:
@@ -674,27 +679,32 @@ Generate {count} diverse questions testing different concepts within this area.
 For each question, include a source_citation with the specific section, heading, and a brief quote from the study content that the question is based on."""
 
         try:
-            # Use structured outputs beta - guarantees valid JSON matching schema
+            # Use structured outputs - guarantees valid JSON matching schema (GPT 5.2)
             response = await self._call_api_with_retry(
-                self.client.beta.messages.create,
-                model=self.settings.claude_model,
-                max_tokens=4096,
-                betas=["structured-outputs-2025-11-13"],
-                system=BATCH_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-                output_format={
+                self.client.chat.completions.create,
+                model=self.settings.openai_model,
+                max_completion_tokens=self.settings.generation_max_tokens,
+                messages=[
+                    {"role": "developer", "content": BATCH_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={
                     "type": "json_schema",
-                    "schema": transform_schema(QuestionBatch),
+                    "json_schema": {
+                        "name": "question_batch",
+                        "strict": True,
+                        "schema": QuestionBatch.model_json_schema(),
+                    },
                 },
             )
 
             # Guaranteed valid JSON - just parse it
-            content_block = response.content[0]
-            if not hasattr(content_block, "text"):
-                logger.error("Batch response has no text content")
+            response_content = response.choices[0].message.content
+            if not response_content:
+                logger.error("Batch response has no content")
                 return []
 
-            data = json.loads(content_block.text)
+            data = json.loads(response_content)
             questions = data["questions"]
 
             # Normalize each question
@@ -706,7 +716,7 @@ For each question, include a source_citation with the specific section, heading,
 
                 # Add content area and model metadata
                 q["content_area"] = content_area.value
-                q["model"] = self.settings.claude_model
+                q["model"] = self.settings.openai_model
 
                 # Ensure category is set (default to scenario if missing)
                 if not q.get("category"):
@@ -714,13 +724,13 @@ For each question, include a source_citation with the specific section, heading,
 
             logger.info(
                 f"Generated {len(questions)} questions for {content_area.value}: "
-                f"{response.usage.input_tokens} in, {response.usage.output_tokens} out"
+                f"{response.usage.prompt_tokens} in, {response.usage.completion_tokens} out"
             )
 
             return questions
 
-        except anthropic.APIError as e:
-            logger.error(f"Claude API error in batch generation: {e}")
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error in batch generation: {e}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error in batch generation: {e}")
         except Exception as e:
