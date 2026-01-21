@@ -196,7 +196,7 @@ class Points:
     FIRST_QUESTION_OF_DAY_BONUS = 5
 
 
-# Common timezones for selection
+# Common timezones for selection (legacy - kept for compatibility)
 COMMON_TIMEZONES = [
     ("America/Los_Angeles", "Pacific (PT)"),
     ("America/Denver", "Mountain (MT)"),
@@ -205,3 +205,38 @@ COMMON_TIMEZONES = [
     ("America/Anchorage", "Alaska (AKT)"),
     ("Pacific/Honolulu", "Hawaii (HT)"),
 ]
+
+# Timezone regions with common timezones per region
+TIMEZONE_REGIONS: dict[str, list[tuple[str, str]]] = {
+    "americas": [
+        ("America/New_York", "Eastern (ET) - New York"),
+        ("America/Chicago", "Central (CT) - Chicago"),
+        ("America/Denver", "Mountain (MT) - Denver"),
+        ("America/Los_Angeles", "Pacific (PT) - Los Angeles"),
+        ("America/Anchorage", "Alaska (AKT)"),
+        ("America/Sao_Paulo", "São Paulo (BRT)"),
+        ("America/Mexico_City", "Mexico City (CST)"),
+    ],
+    "europe": [
+        ("Europe/London", "London (GMT/BST)"),
+        ("Europe/Paris", "Paris / Berlin (CET)"),
+        ("Europe/Moscow", "Moscow (MSK)"),
+        ("Africa/Johannesburg", "Johannesburg (SAST)"),
+        ("Africa/Lagos", "Lagos (WAT)"),
+    ],
+    "asia_pacific": [
+        ("Asia/Dubai", "Dubai (GST)"),
+        ("Asia/Kolkata", "India (IST)"),
+        ("Asia/Singapore", "Singapore (SGT)"),
+        ("Asia/Tokyo", "Tokyo (JST)"),
+        ("Asia/Shanghai", "China (CST)"),
+        ("Australia/Sydney", "Sydney (AEST)"),
+        ("Pacific/Auckland", "Auckland (NZST)"),
+    ],
+}
+
+REGION_LABELS: dict[str, str] = {
+    "americas": "🌎 Americas",
+    "europe": "🌍 Europe / Africa",
+    "asia_pacific": "🌏 Asia / Pacific",
+}

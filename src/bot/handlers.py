@@ -9,6 +9,7 @@ import time
 from datetime import date
 from typing import Optional
 
+import pytz
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
@@ -24,6 +25,7 @@ from src.bot.middleware import (
 from src.config.constants import (
     ACHIEVEMENTS,
     CONTENT_AREA_ALIASES,
+    TIMEZONE_REGIONS,
     AchievementType,
     ContentArea,
     Points,
@@ -33,6 +35,16 @@ from src.config.settings import get_settings
 from src.database.repository import get_repository
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# Timezone Validation
+# =============================================================================
+
+
+def is_valid_timezone(tz: str) -> bool:
+    """Check if timezone string is valid."""
+    return tz in pytz.all_timezones
 
 
 # =============================================================================
@@ -83,10 +95,10 @@ async def start_command(
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    # Start onboarding - timezone selection
+    # Start onboarding - timezone region selection
     await update.message.reply_text(
         messages.format_timezone_prompt(),
-        reply_markup=keyboards.build_timezone_keyboard(),
+        reply_markup=keyboards.build_timezone_region_keyboard(),
     )
 
     # Store onboarding state
@@ -130,6 +142,81 @@ async def timezone_callback(
 
     # Move to focus areas step
     await query.edit_message_text(
+        messages.format_focus_areas_prompt(),
+        reply_markup=keyboards.build_focus_areas_keyboard(),
+    )
+    context.user_data["onboarding_step"] = "focus_areas"
+    context.user_data["selected_focus_areas"] = set()
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def timezone_region_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle timezone region selection callback."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data or ""
+    if not data.startswith("tz_region:"):
+        return
+
+    region = data.replace("tz_region:", "")
+
+    if region == "back":
+        # Go back to region selection
+        await query.edit_message_text(
+            messages.format_timezone_prompt(),
+            reply_markup=keyboards.build_timezone_region_keyboard(),
+        )
+        return
+
+    if region not in TIMEZONE_REGIONS:
+        return
+
+    # Show timezones for selected region
+    await query.edit_message_reply_markup(
+        reply_markup=keyboards.build_timezone_list_keyboard(region),
+    )
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def timezone_text_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle custom timezone text input during onboarding."""
+    if not context.user_data or context.user_data.get("onboarding_step") != "timezone_custom":
+        return  # Not in custom timezone mode
+
+    if not update.message or not update.message.text or not update.effective_user:
+        return
+
+    timezone = update.message.text.strip()
+
+    if not is_valid_timezone(timezone):
+        await update.message.reply_text(
+            f"'{timezone}' is not a valid timezone.\n\n"
+            "Please enter a valid timezone like 'America/New_York' or 'Europe/London'.\n"
+            "See: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"
+        )
+        return
+
+    # Valid timezone - save and continue
+    user_id = update.effective_user.id
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    await repo.update_user(user_id, timezone=timezone)
+
+    # Move to focus areas step
+    await update.message.reply_text(
         messages.format_focus_areas_prompt(),
         reply_markup=keyboards.build_focus_areas_keyboard(),
     )

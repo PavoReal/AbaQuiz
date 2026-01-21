@@ -8,7 +8,7 @@ from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from src.config.constants import COMMON_TIMEZONES, ContentArea
+from src.config.constants import COMMON_TIMEZONES, REGION_LABELS, TIMEZONE_REGIONS, ContentArea
 
 
 def build_answer_keyboard(
@@ -157,7 +157,7 @@ def _get_short_area_name(area: ContentArea) -> str:
 
 def build_timezone_keyboard() -> InlineKeyboardMarkup:
     """
-    Build keyboard for timezone selection.
+    Build keyboard for timezone selection (legacy flat list).
 
     Returns:
         InlineKeyboardMarkup with timezone buttons
@@ -183,6 +183,52 @@ def build_timezone_keyboard() -> InlineKeyboardMarkup:
             )
         ]
     )
+
+    return InlineKeyboardMarkup(buttons)
+
+
+def build_timezone_region_keyboard() -> InlineKeyboardMarkup:
+    """
+    Build keyboard for timezone region selection.
+
+    Returns:
+        InlineKeyboardMarkup with region buttons
+    """
+    buttons = []
+
+    for region_key, label in REGION_LABELS.items():
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"tz_region:{region_key}")]
+        )
+
+    # Add option to type custom timezone
+    buttons.append(
+        [InlineKeyboardButton("Other (type manually)", callback_data="timezone:custom")]
+    )
+
+    return InlineKeyboardMarkup(buttons)
+
+
+def build_timezone_list_keyboard(region: str) -> InlineKeyboardMarkup:
+    """
+    Build keyboard for timezones in a specific region.
+
+    Args:
+        region: Region key (americas, europe, asia_pacific)
+
+    Returns:
+        InlineKeyboardMarkup with timezone buttons and back button
+    """
+    timezones = TIMEZONE_REGIONS.get(region, [])
+    buttons = []
+
+    for tz_name, display_name in timezones:
+        buttons.append(
+            [InlineKeyboardButton(display_name, callback_data=f"timezone:{tz_name}")]
+        )
+
+    # Add back button
+    buttons.append([InlineKeyboardButton("← Back", callback_data="tz_region:back")])
 
     return InlineKeyboardMarkup(buttons)
 

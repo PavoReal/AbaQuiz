@@ -202,7 +202,7 @@ async def run_web_only() -> None:
 
 def register_handlers(application) -> None:
     """Register all bot handlers."""
-    from telegram.ext import CallbackQueryHandler, CommandHandler
+    from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
     from src.bot.admin_handlers import (
         admin_command,
@@ -233,6 +233,8 @@ def register_handlers(application) -> None:
         stop_command,
         streak_command,
         timezone_callback,
+        timezone_region_callback,
+        timezone_text_handler,
     )
 
     # User command handlers
@@ -265,6 +267,9 @@ def register_handlers(application) -> None:
         CallbackQueryHandler(timezone_callback, pattern=r"^timezone:")
     )
     application.add_handler(
+        CallbackQueryHandler(timezone_region_callback, pattern=r"^tz_region:")
+    )
+    application.add_handler(
         CallbackQueryHandler(focus_callback, pattern=r"^focus:")
     )
     application.add_handler(
@@ -282,6 +287,11 @@ def register_handlers(application) -> None:
     )
     application.add_handler(
         CallbackQueryHandler(report_cancel_callback, pattern=r"^report_cancel$")
+    )
+
+    # Text message handler for custom timezone input during onboarding
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, timezone_text_handler)
     )
 
     logger.info("Registered all handlers")
