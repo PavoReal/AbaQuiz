@@ -84,9 +84,9 @@ async def _get_pool_stats(repo: Any, settings: Any) -> dict[str, Any]:
 
     # Get basic counts
     total_questions = await repo.get_total_question_count()
-    active_users = await repo.get_active_user_count(days=pool_manager.ACTIVE_DAYS)
+    active_users = await repo.get_active_user_count(days=pool_manager.settings.pool_active_days)
     avg_unseen = await repo.get_avg_unseen_questions_for_active_users(
-        days=pool_manager.ACTIVE_DAYS
+        days=pool_manager.settings.pool_active_days
     )
 
     # Get counts by content area
