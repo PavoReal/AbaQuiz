@@ -110,71 +110,66 @@ These are copyrighted materials that provide comprehensive coverage:
 
 ## Download Script
 
-Run this to download the free PDFs:
+Run this to download the free PDFs (all PDFs stored flat in `data/raw/`):
 
 ```bash
 #!/bin/bash
-# Create directories
-mkdir -p data/raw/fba
-mkdir -p data/raw/verbal_behavior
-mkdir -p data/raw/assessment
-mkdir -p data/raw/research_design
-mkdir -p data/raw/differential_reinforcement
+mkdir -p data/raw
 
 # FBA Resources
-curl -L -o data/raw/fba/Oregon-FBA-Training-Manual.pdf \
+curl -L -o data/raw/Oregon-FBA-Training-Manual.pdf \
   "https://www.opepp.org/wp-content/uploads/2019/05/FBATrainingManualDocumentforOPIMAEP.pdf"
 
-curl -L -o data/raw/fba/ERIC-FBA-EBP-Brief.pdf \
+curl -L -o data/raw/ERIC-FBA-EBP-Brief.pdf \
   "https://files.eric.ed.gov/fulltext/ED595335.pdf"
 
-curl -L -o data/raw/fba/AFIRM-FBA-Brief-2024.pdf \
+curl -L -o data/raw/AFIRM-FBA-Brief-2024.pdf \
   "https://afirm.fpg.unc.edu/wp-content/uploads/Functional-Behavior-Assessment-Brief-Packet-Sam-AFIRM-Team-Updated-2024.pdf"
 
-curl -L -o data/raw/fba/Missouri-FBA-Workbook.pdf \
+curl -L -o data/raw/Missouri-FBA-Workbook.pdf \
   "http://pbismissouri.org/wp-content/uploads/2017/06/5.0-MO-SW-PBS-Tier-3-Workbook-Ch-5-FBA.pdf"
 
-curl -L -o data/raw/fba/CT-FBA-Guide.pdf \
+curl -L -o data/raw/CT-FBA-Guide.pdf \
   "https://portal.ct.gov/-/media/SDE/Publications/edguide/FunctionalBehavioralAssessmentandModelForm.pdf"
 
-curl -L -o data/raw/fba/PaTTAN-FBA-Process.pdf \
+curl -L -o data/raw/PaTTAN-FBA-Process.pdf \
   "https://www.pattan.net/getmedia/eca12015-858b-4448-962d-753816d71e20/FBA_ProcessBklt0516"
 
 # Verbal Behavior Resources
-curl -L -o data/raw/verbal_behavior/Skinner-VB-Study-Guide.pdf \
+curl -L -o data/raw/Skinner-VB-Study-Guide.pdf \
   "https://www.bfskinner.org/wp-content/uploads/2021/07/VB_STUDY_GUIDE.pdf"
 
-curl -L -o data/raw/verbal_behavior/PA-VB-Project-Guide.pdf \
+curl -L -o data/raw/PA-VB-Project-Guide.pdf \
   "https://www.pattan.net/getmedia/9da10233-cba2-40d4-9e0d-f91b3d1520ba/dvd-guidebk411007"
 
-curl -L -o data/raw/verbal_behavior/Sundberg-VB-Glossary.pdf \
+curl -L -o data/raw/Sundberg-VB-Glossary.pdf \
   "https://autismteachingsupports.weebly.com/uploads/5/5/9/7/55979461/sundberg-_verbalbehaviorglossary.pdf"
 
 # Assessment Resources
-curl -L -o data/raw/assessment/VB-MAPP-Protocol-Sample.pdf \
+curl -L -o data/raw/VB-MAPP-Protocol-Sample.pdf \
   "https://avbpress.com/wp-content/uploads/2019/08/Protocol_look_inside.pdf"
 
-curl -L -o data/raw/assessment/VB-MAPP-Guide-Sample.pdf \
+curl -L -o data/raw/VB-MAPP-Guide-Sample.pdf \
   "https://avbpress.com/wp-content/uploads/2019/08/Guide_look_inside.pdf"
 
-curl -L -o data/raw/assessment/VB-MAPP-Level1-Protocol.pdf \
+curl -L -o data/raw/VB-MAPP-Level1-Protocol.pdf \
   "https://abafit.coursewebs.com/Courses/CommonFiles/E)%20VB-Mapp%20Protocol%206-23.pdf"
 
-curl -L -o data/raw/assessment/Barber-Developmental-Assessment.pdf \
+curl -L -o data/raw/Barber-Developmental-Assessment.pdf \
   "https://www.barberinstitute.org/uploads/2023%20Autism%20Manual/Chapter%2013%20-%20Developmental%20Assessment.pdf"
 
-curl -L -o data/raw/assessment/ABLLS-R-Protocol-Sample.pdf \
+curl -L -o data/raw/ABLLS-R-Protocol-Sample.pdf \
   "https://kapextmediassl-a.akamaihd.net/artsSCi/PS563/2204A/ABLLS-R_Protocol_2018.pdf"
 
 # Research Design & Theory
-curl -L -o data/raw/research_design/Harvard-SCED-Family.pdf \
+curl -L -o data/raw/Harvard-SCED-Family.pdf \
   "https://hdsr.mitpress.mit.edu/pub/nqvadq0w/download/pdf"
 
-curl -L -o data/raw/research_design/UFL-Behavioral-Momentum.pdf \
+curl -L -o data/raw/UFL-Behavioral-Momentum.pdf \
   "https://people.clas.ufl.edu/deleon/files/Podlesnik-DeLeon-2015.pdf"
 
 # Differential Reinforcement
-curl -L -o data/raw/differential_reinforcement/MasterABA-DR-Guide-2024.pdf \
+curl -L -o data/raw/MasterABA-DR-Guide-2024.pdf \
   "https://masteraba.com/wp-content/uploads/2024/12/Differential-Reinforcement-Guide-2024-Update.pdf"
 
 echo "Download complete! Run preprocessing on data/raw/ to convert to markdown."
