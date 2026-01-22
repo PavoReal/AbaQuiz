@@ -9,6 +9,60 @@ from typing import Any, Optional
 from src.config.constants import ACHIEVEMENTS, AchievementType, ContentArea
 
 
+def format_source_citation(
+    citation: dict[str, Any] | None,
+    expanded: bool = False,
+) -> tuple[str, bool]:
+    """
+    Format source citation for display.
+
+    Args:
+        citation: Citation dict with section, heading, quote fields
+        expanded: Whether to show the full quote
+
+    Returns:
+        Tuple of (formatted_text, has_expandable_quote)
+    """
+    if not citation:
+        return ("", False)
+
+    section = citation.get("section", "")
+    heading = citation.get("heading", "")
+    quote = citation.get("quote", "")
+
+    # If no meaningful content, return empty
+    if not section and not heading and not quote:
+        return ("", False)
+
+    lines = [
+        "────────────────────",
+        "📖 *Source*",
+    ]
+
+    if section:
+        lines.append(f"Section: {section}")
+    if heading:
+        lines.append(f"Heading: {heading}")
+
+    # Truncate quote if not expanded and > 100 chars
+    has_expandable = False
+    if quote:
+        if not expanded and len(quote) > 100:
+            # Truncate at word boundary
+            truncated = quote[:100].rsplit(" ", 1)[0]
+            if len(truncated) < 50:
+                # If truncation at word boundary is too short, just cut at 100
+                truncated = quote[:100]
+            quote_display = f'_"{truncated}..."_'
+            has_expandable = True
+        else:
+            quote_display = f'_"{quote}"_'
+        lines.append("")
+        lines.append(quote_display)
+
+    return ("\n".join(lines), has_expandable)
+
+
 def format_welcome_message() -> str:
     """Format the initial welcome message for new users."""
     return """Welcome to AbaQuiz! 🎓
@@ -92,7 +146,9 @@ def format_correct_answer(
     points_earned: int = 0,
     streak: int = 0,
     new_achievement: Optional[AchievementType] = None,
-) -> str:
+    source_citation: Optional[dict[str, Any]] = None,
+    expanded: bool = False,
+) -> tuple[str, bool]:
     """
     Format feedback for a correct answer.
 
@@ -101,9 +157,11 @@ def format_correct_answer(
         points_earned: Points earned for this answer
         streak: Current streak count
         new_achievement: Newly unlocked achievement (if any)
+        source_citation: Source citation dict (section, heading, quote)
+        expanded: Whether to show expanded quote
 
     Returns:
-        Formatted feedback message
+        Tuple of (formatted_message, has_expandable_quote)
     """
     lines = ["✅ *Correct!*"]
 
@@ -127,14 +185,23 @@ def format_correct_answer(
         name = achievement.get("name", new_achievement.value)
         lines.append(f"\n\n🎉 *Achievement Unlocked!*\n{badge} {name}")
 
-    return "\n".join(lines)
+    # Add source citation if available
+    has_expandable = False
+    if source_citation:
+        citation_text, has_expandable = format_source_citation(source_citation, expanded)
+        if citation_text:
+            lines.append(f"\n{citation_text}")
+
+    return ("\n".join(lines), has_expandable)
 
 
 def format_incorrect_answer(
     correct_answer: str,
     explanation: str,
     streak_broken: bool = False,
-) -> str:
+    source_citation: Optional[dict[str, Any]] = None,
+    expanded: bool = False,
+) -> tuple[str, bool]:
     """
     Format feedback for an incorrect answer.
 
@@ -142,9 +209,11 @@ def format_incorrect_answer(
         correct_answer: The correct answer
         explanation: Detailed explanation
         streak_broken: Whether the streak was broken
+        source_citation: Source citation dict (section, heading, quote)
+        expanded: Whether to show expanded quote
 
     Returns:
-        Formatted feedback message
+        Tuple of (formatted_message, has_expandable_quote)
     """
     lines = [f"❌ *Incorrect*\n\nThe correct answer was: *{correct_answer}*"]
 
@@ -154,7 +223,14 @@ def format_incorrect_answer(
     if streak_broken:
         lines.append("\n\n💔 Your streak has been reset. Keep practicing!")
 
-    return "\n".join(lines)
+    # Add source citation if available
+    has_expandable = False
+    if source_citation:
+        citation_text, has_expandable = format_source_citation(source_citation, expanded)
+        if citation_text:
+            lines.append(f"\n{citation_text}")
+
+    return ("\n".join(lines), has_expandable)
 
 
 def format_stats(

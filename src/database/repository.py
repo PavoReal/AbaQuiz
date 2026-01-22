@@ -551,6 +551,20 @@ class Repository:
         ) as cursor:
             return await cursor.fetchone() is not None
 
+    async def get_user_answer(
+        self, user_id: int, question_id: int
+    ) -> dict[str, Any] | None:
+        """Get a specific user answer record."""
+        async with self.db.execute(
+            """
+            SELECT * FROM user_answers
+            WHERE user_id = ? AND question_id = ?
+            """,
+            (user_id, question_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
     async def get_user_answers(
         self,
         user_id: int,

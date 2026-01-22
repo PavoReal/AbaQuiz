@@ -436,3 +436,24 @@ def build_report_type_keyboard(question_id: int) -> InlineKeyboardMarkup:
     )
 
     return InlineKeyboardMarkup(buttons)
+
+
+def build_source_expand_keyboard(question_id: int) -> InlineKeyboardMarkup:
+    """
+    Build keyboard with 'Show Full Quote' button.
+
+    Args:
+        question_id: Question ID for callback data
+
+    Returns:
+        InlineKeyboardMarkup with expand button
+    """
+    buttons = [
+        [
+            InlineKeyboardButton(
+                "📖 Show Full Quote",
+                callback_data=f"expand_source:{question_id}",
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(buttons)

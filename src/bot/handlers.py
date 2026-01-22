@@ -698,30 +698,47 @@ async def answer_callback(
     # Check for new achievements
     new_achievement = await check_achievements(internal_user_id, repo)
 
+    # Get source citation if available
+    source_citation = question.get("source_citation")
+
     # Format response
     if is_correct:
-        response = messages.format_correct_answer(
+        response, has_expand = messages.format_correct_answer(
             explanation=question["explanation"],
             points_earned=points,
             streak=new_streak,
             new_achievement=new_achievement,
+            source_citation=source_citation,
         )
     else:
-        response = messages.format_incorrect_answer(
+        response, has_expand = messages.format_incorrect_answer(
             correct_answer=question["correct_answer"],
             explanation=question["explanation"],
             streak_broken=not streak_increased and new_streak == 1,
+            source_citation=source_citation,
         )
 
     await query.answer("Correct! ✅" if is_correct else "Incorrect ❌")
+
+    # Build reply markup with expand button if needed
+    reply_markup = keyboards.build_source_expand_keyboard(question_id) if has_expand else None
 
     # Edit original message to show result
     try:
         # Keep the question visible but disable buttons
         original_text = query.message.text if query.message else ""
+        full_message = f"{original_text}\n\n{'─' * 20}\n\n{response}"
+
+        # Check message length limit (4096 chars for Telegram)
+        if len(full_message) > 4096:
+            # Truncate and skip expand button
+            full_message = full_message[:4090] + "..."
+            reply_markup = None
+
         await query.edit_message_text(
-            f"{original_text}\n\n{'─' * 20}\n\n{response}",
+            full_message,
             parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup,
         )
     except Exception as e:
         logger.error(f"Failed to edit message: {e}")
@@ -888,6 +905,115 @@ async def report_cancel_callback(
         await query.delete_message()
     except Exception:
         await query.edit_message_text("Report cancelled.")
+
+
+# =============================================================================
+# Source Citation Expand Handler
+# =============================================================================
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def expand_source_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle expand source quote button click."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    user = update.effective_user
+    data = query.data or ""
+
+    if not data.startswith("expand_source:"):
+        return
+
+    await query.answer()
+
+    # Parse question_id from callback data: "expand_source:{question_id}"
+    try:
+        question_id = int(data.split(":")[1])
+    except (IndexError, ValueError):
+        logger.warning(f"Invalid expand_source callback data: {data}")
+        return
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Get question to retrieve source citation
+    question = await repo.get_question_by_id(question_id)
+    if not question:
+        logger.warning(f"Question {question_id} not found for expand_source")
+        return
+
+    source_citation = question.get("source_citation")
+    if not source_citation:
+        # No citation to expand, just remove the button
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    # Get user to check their answer for this question
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        return
+
+    # Get the user's answer for this question to determine correct/incorrect
+    user_answer_record = await repo.get_user_answer(db_user["id"], question_id)
+    if not user_answer_record:
+        # User hasn't answered, just remove the button
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    is_correct = user_answer_record.get("is_correct", False)
+
+    # Re-render message with expanded=True
+    # We need to reconstruct the feedback portion with expanded citation
+    if is_correct:
+        response, _ = messages.format_correct_answer(
+            explanation=question["explanation"],
+            source_citation=source_citation,
+            expanded=True,
+        )
+    else:
+        response, _ = messages.format_incorrect_answer(
+            correct_answer=question["correct_answer"],
+            explanation=question["explanation"],
+            source_citation=source_citation,
+            expanded=True,
+        )
+
+    # Get the original message and replace only the feedback portion
+    try:
+        original_text = query.message.text if query.message else ""
+        # Find where the separator is (the feedback starts after the separator)
+        separator = "─" * 20
+        if separator in original_text:
+            # Keep everything before the separator + separator, replace after
+            parts = original_text.split(separator, 1)
+            new_text = f"{parts[0]}{separator}\n\n{response}"
+        else:
+            # No separator found, just use response
+            new_text = response
+
+        # Check message length limit (4096 chars for Telegram)
+        if len(new_text) > 4096:
+            new_text = new_text[:4090] + "..."
+
+        # Edit message text and remove the expand button
+        await query.edit_message_text(
+            new_text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=None,
+        )
+    except Exception as e:
+        logger.error(f"Failed to expand source citation: {e}")
 
 
 async def check_achievements(

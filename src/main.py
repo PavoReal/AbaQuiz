@@ -220,6 +220,7 @@ def register_handlers(application) -> None:
         answer_callback,
         areas_command,
         daily_command,
+        expand_source_callback,
         focus_callback,
         health_command,
         help_command,
@@ -291,6 +292,10 @@ def register_handlers(application) -> None:
     )
     application.add_handler(
         CallbackQueryHandler(report_cancel_callback, pattern=r"^report_cancel$")
+    )
+    # Source citation expand handler
+    application.add_handler(
+        CallbackQueryHandler(expand_source_callback, pattern=r"^expand_source:\d+$")
     )
 
     # Text message handler for custom timezone input during onboarding
