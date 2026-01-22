@@ -123,6 +123,85 @@ class VectorStoreManager:
         except Exception as e:
             raise RuntimeError(f"Failed to create vector store: {e}") from e
 
+    async def link_store(self, store_id: str, rebuild_file_state: bool = True, force: bool = False) -> dict[str, Any]:
+        """Link to an existing OpenAI vector store.
+
+        Args:
+            store_id: The OpenAI vector store ID (e.g., "vs_abc123...")
+            rebuild_file_state: If True, fetch file list from OpenAI to populate state
+            force: If True, overwrite existing state even if linked to different store
+
+        Returns:
+            Dict with store info and file count
+
+        Raises:
+            ValueError: If store_id is invalid or store doesn't exist
+            RuntimeError: If already linked to a different store (unless force=True)
+        """
+        # Check if already linked to a different store
+        existing_id = await self.get_store_id()
+        if existing_id and existing_id != store_id and not force:
+            raise RuntimeError(
+                f"Already linked to vector store {existing_id}. "
+                f"Use --force to override."
+            )
+
+        # Verify store exists and is accessible
+        try:
+            store = await self.client.vector_stores.retrieve(store_id)
+        except Exception as e:
+            raise ValueError(f"Cannot access vector store '{store_id}': {e}") from e
+
+        # Check store status
+        if store.status == "expired":
+            raise ValueError(f"Vector store '{store_id}' has expired")
+
+        # Build file state from OpenAI if requested
+        files_state: dict[str, Any] = {}
+        if rebuild_file_state:
+            try:
+                # List all files in the vector store
+                vs_files = await self.client.vector_stores.files.list(vector_store_id=store_id)
+                for vs_file in vs_files.data:
+                    try:
+                        # Get file details
+                        file_obj = await self.client.files.retrieve(vs_file.id)
+                        files_state[file_obj.filename] = {
+                            "file_id": vs_file.id,
+                            "uploaded_at": datetime.fromtimestamp(
+                                file_obj.created_at, tz=timezone.utc
+                            ).isoformat(),
+                            "size_bytes": file_obj.bytes,
+                            "checksum": "unknown",  # Can't recover original checksum
+                        }
+                    except Exception as e:
+                        logger.warning(f"Could not retrieve file info for {vs_file.id}: {e}")
+            except Exception as e:
+                logger.warning(f"Could not list files from vector store: {e}")
+
+        # Save state
+        state = {
+            "vector_store_id": store_id,
+            "created_at": None,  # null indicates linked, not created
+            "linked_at": datetime.now(timezone.utc).isoformat(),
+            "last_sync": datetime.now(timezone.utc).isoformat() if rebuild_file_state else None,
+            "files": files_state,
+        }
+        self._save_state(state)
+
+        logger.info(f"Linked to vector store: {store_id}")
+
+        return {
+            "store_id": store_id,
+            "store_name": store.name,
+            "store_status": store.status,
+            "file_count": store.file_counts.total,
+            "files_completed": store.file_counts.completed,
+            "files_in_progress": store.file_counts.in_progress,
+            "files_failed": store.file_counts.failed,
+            "tracked_files": len(files_state),
+        }
+
     async def upload_files(self, directory: Optional[Path] = None) -> list[str]:
         """Upload all .md files from directory to vector store.
 
@@ -341,6 +420,7 @@ class VectorStoreManager:
             "configured": store_id is not None,
             "vector_store_id": store_id,
             "created_at": state.get("created_at"),
+            "linked_at": state.get("linked_at"),
             "last_sync": state.get("last_sync"),
             "local_file_count": len(list(self.content_dir.glob("*.md"))) - 1,  # Exclude index
             "tracked_file_count": len(state.get("files", {})),

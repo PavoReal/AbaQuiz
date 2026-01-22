@@ -38,6 +38,7 @@ source .venv/bin/activate
 
 # Vector store management
 .venv/bin/python -m src.scripts.manage_vector_store create   # Initial setup
+.venv/bin/python -m src.scripts.manage_vector_store link <id> # Link to existing store
 .venv/bin/python -m src.scripts.manage_vector_store sync     # Sync after content changes
 .venv/bin/python -m src.scripts.manage_vector_store status   # Check status
 .venv/bin/python -m src.scripts.manage_vector_store list     # List files
@@ -180,6 +181,11 @@ Before running the bot, set up the vector store:
 
 # 3. Verify setup
 .venv/bin/python -m src.scripts.manage_vector_store status
+```
+
+To link to an existing vector store (e.g., after state file loss):
+```bash
+.venv/bin/python -m src.scripts.manage_vector_store link vs_abc123...
 ```
 
 After updating content files, run sync:

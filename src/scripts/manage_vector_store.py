@@ -8,6 +8,9 @@ Usage:
     # Create new vector store and upload all files
     python -m src.scripts.manage_vector_store create
 
+    # Link to an existing vector store
+    python -m src.scripts.manage_vector_store link <store_id>
+
     # Sync files (upload new, remove deleted)
     python -m src.scripts.manage_vector_store sync
 
@@ -57,6 +60,56 @@ async def cmd_create(_args: argparse.Namespace) -> int:
         return 1
 
     print("\nVector store ready!")
+    return 0
+
+
+async def cmd_link(args: argparse.Namespace) -> int:
+    """Link to an existing OpenAI vector store."""
+    manager = get_vector_store_manager()
+
+    store_id = args.store_id
+    skip_file_sync = args.skip_file_sync
+    force = args.force
+
+    print(f"Linking to vector store: {store_id}")
+
+    try:
+        result = await manager.link_store(
+            store_id=store_id,
+            rebuild_file_state=not skip_file_sync,
+            force=force,
+        )
+    except ValueError as e:
+        print(f"  Error: {e}")
+        return 1
+    except RuntimeError as e:
+        print(f"  Error: {e}")
+        return 1
+
+    print(f"\nLinked successfully!")
+    print(f"  Store ID:   {result['store_id']}")
+    print(f"  Store Name: {result['store_name']}")
+    print(f"  Status:     {result['store_status']}")
+    print()
+    print(f"Files in OpenAI:")
+    print(f"  Total:       {result['file_count']}")
+    print(f"  Completed:   {result['files_completed']}")
+    print(f"  In Progress: {result['files_in_progress']}")
+    if result['files_failed'] > 0:
+        print(f"  Failed:      {result['files_failed']}")
+    print()
+    print(f"Tracked locally: {result['tracked_files']} files")
+
+    # Check for mismatches with local files
+    local_files = list((manager.content_dir).glob("*.md"))
+    local_files = [f for f in local_files if f.name != "00_index.md"]
+    local_count = len(local_files)
+
+    if local_count != result['tracked_files']:
+        print()
+        print(f"Warning: Local files ({local_count}) != tracked files ({result['tracked_files']})")
+        print("  Consider running: python -m src.scripts.manage_vector_store sync")
+
     return 0
 
 
@@ -133,7 +186,10 @@ async def cmd_status(_args: argparse.Namespace) -> int:
         return 0
 
     print(f"  Store ID:    {status['vector_store_id']}")
-    print(f"  Created:     {status['created_at']}")
+    if status.get('linked_at'):
+        print(f"  Linked:      {status['linked_at']}")
+    else:
+        print(f"  Created:     {status['created_at']}")
     print(f"  Last Sync:   {status['last_sync'] or 'Never'}")
     print()
 
@@ -186,15 +242,17 @@ async def main() -> int:
         epilog="""
 Commands:
   create   Create new vector store and upload all files
+  link     Link to an existing OpenAI vector store
   sync     Sync files (upload new/changed, remove deleted)
   list     List files in vector store
   status   Show vector store status
   delete   Delete vector store
 
 Examples:
-  %(prog)s create          # Initial setup
-  %(prog)s sync            # After updating content files
-  %(prog)s status          # Check current state
+  %(prog)s create              # Initial setup
+  %(prog)s link vs_abc123...   # Link to existing store
+  %(prog)s sync                # After updating content files
+  %(prog)s status              # Check current state
 """,
     )
 
@@ -202,6 +260,23 @@ Examples:
 
     # Create command
     subparsers.add_parser("create", help="Create vector store and upload files")
+
+    # Link command
+    link_parser = subparsers.add_parser("link", help="Link to an existing OpenAI vector store")
+    link_parser.add_argument(
+        "store_id",
+        help="The OpenAI vector store ID (e.g., vs_abc123...)",
+    )
+    link_parser.add_argument(
+        "--skip-file-sync",
+        action="store_true",
+        help="Don't fetch file list from OpenAI",
+    )
+    link_parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Overwrite existing state even if linked to different store",
+    )
 
     # Sync command
     subparsers.add_parser("sync", help="Sync files with vector store")
@@ -228,6 +303,7 @@ Examples:
     # Route to command handler
     handlers = {
         "create": cmd_create,
+        "link": cmd_link,
         "sync": cmd_sync,
         "list": cmd_list,
         "status": cmd_status,
