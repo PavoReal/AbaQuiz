@@ -1,0 +1,22 @@
+{
+  "name": "abaquiz-admin",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts",
+    "build:css": "bunx tailwindcss -i ./static/css/input.css -o ./static/css/main.css --minify",
+    "watch:css": "bunx tailwindcss -i ./static/css/input.css -o ./static/css/main.css --watch"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0",
+    "@tailwindcss/forms": "^0.5.0"
+  }
+}

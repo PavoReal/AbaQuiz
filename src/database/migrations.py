@@ -11,6 +11,9 @@ from src.database.models import (
     ALL_TABLES,
     CREATE_ADMINS_TABLE,
     CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE,
+    CREATE_BROADCAST_QUEUE_TABLE,
+    CREATE_GENERATION_PROGRESS_TABLE,
+    CREATE_GENERATION_QUEUE_TABLE,
     CREATE_INDEXES,
     CREATE_NOTIFICATION_LOG_TABLE,
     CREATE_QUESTION_REPORTS_TABLE,
@@ -92,6 +95,11 @@ async def run_migrations(db_path: str) -> None:
         if current_version < 4:
             await migrate_to_v4(db)
             await set_schema_version(db, 4)
+
+        # Migration v5: Add IPC queue tables for web admin
+        if current_version < 5:
+            await migrate_to_v5(db)
+            await set_schema_version(db, 5)
 
         await db.commit()
 
@@ -325,3 +333,48 @@ async def migrate_to_v4(db: aiosqlite.Connection) -> None:
     logger.info("Created indexes for notification tables")
 
     logger.info("Migration v4 complete")
+
+
+async def migrate_to_v5(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 5.
+
+    Adds IPC queue tables for web admin communication:
+    - New table: broadcast_queue (web admin writes, bot processes)
+    - New table: generation_queue (web admin writes, bot processes)
+    - New table: generation_progress (bot writes, web admin reads)
+    """
+    logger.info("Running migration v5: Adding IPC queue tables for web admin")
+
+    # Create broadcast_queue table
+    await db.execute(CREATE_BROADCAST_QUEUE_TABLE)
+    logger.info("Created broadcast_queue table")
+
+    # Create generation_queue table
+    await db.execute(CREATE_GENERATION_QUEUE_TABLE)
+    logger.info("Created generation_queue table")
+
+    # Create generation_progress table
+    await db.execute(CREATE_GENERATION_PROGRESS_TABLE)
+    logger.info("Created generation_progress table")
+
+    # Create indexes for queue tables
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_broadcast_queue_status "
+        "ON broadcast_queue(status)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_broadcast_queue_created_at "
+        "ON broadcast_queue(created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_queue_status "
+        "ON generation_queue(status)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_queue_created_at "
+        "ON generation_queue(created_at)"
+    )
+    logger.info("Created indexes for queue tables")
+
+    logger.info("Migration v5 complete")

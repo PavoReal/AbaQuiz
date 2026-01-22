@@ -39,6 +39,8 @@ wheels/
 # Database
 data/abaquiz.db
 *.db
+*.db-shm
+*.db-wal
 
 # Testing
 .pytest_cache/

@@ -206,6 +206,56 @@ CREATE TABLE IF NOT EXISTS notification_log (
 )
 """
 
+# Broadcast queue - web admin writes, bot reads/processes
+CREATE_BROADCAST_QUEUE_TABLE = """
+CREATE TABLE IF NOT EXISTS broadcast_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_text TEXT NOT NULL,
+    message_format TEXT DEFAULT 'text',
+    target_filter TEXT DEFAULT 'all',
+    target_user_ids TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'pending',
+    processed_at TIMESTAMP,
+    sent_count INTEGER DEFAULT 0,
+    error_message TEXT
+)
+"""
+
+# Generation queue - web admin writes, bot reads/processes
+CREATE_GENERATION_QUEUE_TABLE = """
+CREATE TABLE IF NOT EXISTS generation_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    requested_count INTEGER NOT NULL,
+    skip_dedup BOOLEAN DEFAULT FALSE,
+    distribution TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'pending',
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    generated_count INTEGER DEFAULT 0,
+    duplicate_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    error_message TEXT
+)
+"""
+
+# Generation progress - bot writes, web reads for real-time updates
+CREATE_GENERATION_PROGRESS_TABLE = """
+CREATE TABLE IF NOT EXISTS generation_progress (
+    queue_id INTEGER PRIMARY KEY REFERENCES generation_queue(id),
+    current_area TEXT,
+    area_progress TEXT,
+    total_generated INTEGER DEFAULT 0,
+    total_duplicates INTEGER DEFAULT 0,
+    total_errors INTEGER DEFAULT 0,
+    estimated_cost REAL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 # Indexes for performance
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
@@ -246,4 +296,7 @@ ALL_TABLES = [
     CREATE_ADMINS_TABLE,
     CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE,
     CREATE_NOTIFICATION_LOG_TABLE,
+    CREATE_BROADCAST_QUEUE_TABLE,
+    CREATE_GENERATION_QUEUE_TABLE,
+    CREATE_GENERATION_PROGRESS_TABLE,
 ]

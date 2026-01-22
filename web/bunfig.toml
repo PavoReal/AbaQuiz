@@ -1,0 +1,5 @@
+[install]
+peer = false
+
+[run]
+# Auto-restart on file changes in dev mode
