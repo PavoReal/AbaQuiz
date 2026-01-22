@@ -8,7 +8,9 @@
     "admin_users": [],
     "summary_time": "09:00",
     "default_summary_enabled": true,
-    "default_alerts_enabled": true
+    "default_alerts_enabled": true,
+    "notification_batch_interval_minutes": 5,
+    "notification_dedup_window_seconds": 60
   },
   "rate_limit": {
     "extra_questions_per_day": 5,

@@ -10,7 +10,9 @@ from src.config.logging import get_logger
 from src.database.models import (
     ALL_TABLES,
     CREATE_ADMINS_TABLE,
+    CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE,
     CREATE_INDEXES,
+    CREATE_NOTIFICATION_LOG_TABLE,
     CREATE_QUESTION_REPORTS_TABLE,
     CREATE_QUESTION_STATS_TABLE,
     CREATE_QUESTION_REVIEWS_TABLE,
@@ -85,6 +87,11 @@ async def run_migrations(db_path: str) -> None:
         if current_version < 3:
             await migrate_to_v3(db)
             await set_schema_version(db, 3)
+
+        # Migration v4: Add notification system tables
+        if current_version < 4:
+            await migrate_to_v4(db)
+            await set_schema_version(db, 4)
 
         await db.commit()
 
@@ -278,3 +285,43 @@ async def migrate_to_v3(db: aiosqlite.Connection) -> None:
         logger.info("Column 'is_bonus' already exists in sent_questions table")
 
     logger.info("Migration v3 complete")
+
+
+async def migrate_to_v4(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 4.
+
+    Adds admin notification system:
+    - New table: admin_notification_settings (per-event granular controls)
+    - New table: notification_log (event log for summaries and tracking)
+    """
+    logger.info("Running migration v4: Adding notification system tables")
+
+    # Create admin_notification_settings table
+    await db.execute(CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE)
+    logger.info("Created admin_notification_settings table")
+
+    # Create notification_log table
+    await db.execute(CREATE_NOTIFICATION_LOG_TABLE)
+    logger.info("Created notification_log table")
+
+    # Create indexes for new tables
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admin_notification_settings_admin "
+        "ON admin_notification_settings(admin_telegram_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_log_event_type "
+        "ON notification_log(event_type)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_log_created_at "
+        "ON notification_log(created_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_log_summary "
+        "ON notification_log(included_in_summary_at)"
+    )
+    logger.info("Created indexes for notification tables")
+
+    logger.info("Migration v4 complete")

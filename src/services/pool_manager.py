@@ -125,6 +125,10 @@ class PoolManager:
             f"Pool needs replenishment: {avg_unseen:.1f} < {self.threshold} threshold"
         )
 
+        # Notify admins that pool is low
+        from src.services.notification_service import notify_pool_low
+        await notify_pool_low(avg_unseen, self.threshold)
+
         # Calculate distribution
         distribution = self.calculate_batch_distribution()
         logger.info(f"Batch distribution: {distribution}")
@@ -181,6 +185,12 @@ class PoolManager:
         result["by_area"] = generated_by_area
 
         logger.info(f"Pool replenishment complete: {total_generated} questions added")
+
+        # Notify admins of generation completion
+        if total_generated > 0:
+            from src.services.notification_service import notify_generation_complete
+            await notify_generation_complete(total_generated, generated_by_area)
+
         return result
 
     def calculate_batch_distribution(self) -> dict[ContentArea, int]:

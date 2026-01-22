@@ -225,6 +225,14 @@ async def ban_command(
             f"User {telegram_id} has been banned."
             + (f"\nReason: {reason}" if reason else "")
         )
+        # Notify other admins
+        from src.services.notification_service import notify_ban_action
+        await notify_ban_action(
+            admin_id=update.effective_user.id,
+            target_id=telegram_id,
+            action="banned",
+            reason=reason,
+        )
     else:
         await update.message.reply_text(
             f"User {telegram_id} is already banned."
@@ -277,6 +285,13 @@ async def unban_command(
     if was_unbanned:
         await update.message.reply_text(
             f"User {telegram_id} has been unbanned."
+        )
+        # Notify other admins
+        from src.services.notification_service import notify_ban_action
+        await notify_ban_action(
+            admin_id=update.effective_user.id,
+            target_id=telegram_id,
+            action="unbanned",
         )
     else:
         await update.message.reply_text(
@@ -406,7 +421,17 @@ async def notify_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle /notify command - manage notification settings."""
+    """
+    Handle /notify command - manage notification settings.
+
+    Usage:
+        /notify                    - Show settings overview
+        /notify list               - List all event types with status
+        /notify <event> realtime on|off
+        /notify <event> summary on|off
+        /notify all realtime on|off
+        /notify all summary on|off
+    """
     if not update.effective_user or not update.message:
         return
 
@@ -417,8 +442,17 @@ async def notify_command(
     repo = await get_repository(settings.database_path)
     admin_id = update.effective_user.id
 
+    # Import notification service types
+    from src.services.notification_service import (
+        get_all_event_types,
+        get_default_behavior,
+        get_event_priority,
+    )
+
+    all_event_types = get_all_event_types()
+
     if not args:
-        # Show current settings
+        # Show settings overview
         admin_settings = await repo.get_admin_settings(admin_id)
 
         summary_enabled = (
@@ -436,44 +470,154 @@ async def notify_command(
             "*Notification Settings*\n\n"
             f"Daily Summary: {'ON' if summary_enabled else 'OFF'}\n"
             f"Real-time Alerts: {'ON' if alerts_enabled else 'OFF'}\n\n"
-            "Commands:\n"
-            "/notify summary on|off\n"
-            "/notify alerts on|off",
+            "*Commands:*\n"
+            "`/notify list` - Show all event types\n"
+            "`/notify <event> realtime on|off`\n"
+            "`/notify <event> summary on|off`\n"
+            "`/notify all realtime on|off`\n"
+            "`/notify all summary on|off`\n"
+            "`/notify summary on|off` - Global summary\n"
+            "`/notify alerts on|off` - Global alerts",
             parse_mode=ParseMode.MARKDOWN,
         )
         return
 
-    # Parse command
-    if len(args) < 2:
+    # Handle "list" subcommand
+    if args[0].lower() == "list":
+        lines = ["*Notification Settings*\n"]
+
+        for event_type in all_event_types:
+            priority = get_event_priority(event_type)
+            default = get_default_behavior(event_type)
+
+            # Get admin's custom settings for this event type
+            event_settings = await repo.get_admin_notification_setting(
+                admin_id, event_type.value
+            )
+
+            if event_settings:
+                rt_enabled = event_settings.get("realtime_enabled", True)
+                sum_enabled = event_settings.get("summary_enabled", True)
+            else:
+                rt_enabled = default.get("realtime", True)
+                sum_enabled = default.get("summary", True)
+
+            rt_status = "ON" if rt_enabled else "OFF"
+            sum_status = "ON" if sum_enabled else "OFF"
+
+            lines.append(
+                f"`{event_type.value}` [{priority.value}]\n"
+                f"  RT:{rt_status} SUM:{sum_status}"
+            )
+
         await update.message.reply_text(
-            "Usage: /notify summary|alerts on|off"
+            "\n".join(lines),
+            parse_mode=ParseMode.MARKDOWN,
         )
         return
 
-    setting_type = args[0].lower()
-    setting_value = args[1].lower()
+    # Handle legacy "summary on|off" and "alerts on|off" commands
+    if len(args) == 2 and args[0].lower() in ("summary", "alerts"):
+        setting_type = args[0].lower()
+        setting_value = args[1].lower()
 
-    if setting_type not in ("summary", "alerts"):
+        if setting_value not in ("on", "off"):
+            await update.message.reply_text("Value must be 'on' or 'off'.")
+            return
+
+        enabled = setting_value == "on"
+
+        if setting_type == "summary":
+            await repo.update_admin_settings(admin_id, summary_enabled=enabled)
+        else:
+            await repo.update_admin_settings(admin_id, alerts_enabled=enabled)
+
         await update.message.reply_text(
-            "Unknown setting. Use 'summary' or 'alerts'."
+            f"{setting_type.title()} notifications {'enabled' if enabled else 'disabled'}."
+        )
+        return
+
+    # Handle granular event settings: /notify <event> realtime|summary on|off
+    if len(args) < 3:
+        await update.message.reply_text(
+            "Usage: /notify <event> realtime|summary on|off\n"
+            "Or: /notify all realtime|summary on|off"
+        )
+        return
+
+    event_arg = args[0].lower()
+    setting_type = args[1].lower()
+    setting_value = args[2].lower()
+
+    if setting_type not in ("realtime", "summary"):
+        await update.message.reply_text(
+            "Setting type must be 'realtime' or 'summary'."
         )
         return
 
     if setting_value not in ("on", "off"):
-        await update.message.reply_text(
-            "Value must be 'on' or 'off'."
-        )
+        await update.message.reply_text("Value must be 'on' or 'off'.")
         return
 
     enabled = setting_value == "on"
 
-    if setting_type == "summary":
-        await repo.update_admin_settings(admin_id, summary_enabled=enabled)
+    # Handle "all" - update all event types
+    if event_arg == "all":
+        for event_type in all_event_types:
+            if setting_type == "realtime":
+                await repo.update_admin_notification_setting(
+                    admin_id, event_type.value, realtime_enabled=enabled
+                )
+            else:
+                await repo.update_admin_notification_setting(
+                    admin_id, event_type.value, summary_enabled=enabled
+                )
+
+        await update.message.reply_text(
+            f"{setting_type.title()} {'enabled' if enabled else 'disabled'} "
+            f"for all {len(all_event_types)} event types."
+        )
+        return
+
+    # Find matching event type
+    matching_event = None
+    for event_type in all_event_types:
+        if event_type.value == event_arg:
+            matching_event = event_type
+            break
+
+    if not matching_event:
+        # Try partial match
+        matches = [et for et in all_event_types if event_arg in et.value]
+        if len(matches) == 1:
+            matching_event = matches[0]
+        elif len(matches) > 1:
+            match_names = ", ".join(m.value for m in matches)
+            await update.message.reply_text(
+                f"Multiple matches found: {match_names}\n"
+                "Please be more specific."
+            )
+            return
+        else:
+            await update.message.reply_text(
+                f"Unknown event type: {event_arg}\n"
+                "Use `/notify list` to see all event types.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+    # Update the specific event setting
+    if setting_type == "realtime":
+        await repo.update_admin_notification_setting(
+            admin_id, matching_event.value, realtime_enabled=enabled
+        )
     else:
-        await repo.update_admin_settings(admin_id, alerts_enabled=enabled)
+        await repo.update_admin_notification_setting(
+            admin_id, matching_event.value, summary_enabled=enabled
+        )
 
     await update.message.reply_text(
-        f"{setting_type.title()} notifications {'enabled' if enabled else 'disabled'}."
+        f"{matching_event.value}: {setting_type} {'enabled' if enabled else 'disabled'}."
     )
 
 

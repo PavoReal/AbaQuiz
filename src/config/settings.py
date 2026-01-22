@@ -59,6 +59,13 @@ class Settings:
         self.default_alerts_enabled = admin_config.get(
             "default_alerts_enabled", True
         )
+        # Notification batching and deduplication settings
+        self.notification_batch_interval_minutes = admin_config.get(
+            "notification_batch_interval_minutes", 5
+        )
+        self.notification_dedup_window_seconds = admin_config.get(
+            "notification_dedup_window_seconds", 60
+        )
 
         # Rate limiting
         rate_config = self._config.get("rate_limit", {})

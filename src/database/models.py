@@ -179,6 +179,33 @@ CREATE TABLE IF NOT EXISTS admins (
 )
 """
 
+# Granular per-event notification settings
+CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE = """
+CREATE TABLE IF NOT EXISTS admin_notification_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_telegram_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    realtime_enabled BOOLEAN DEFAULT 1,
+    summary_enabled BOOLEAN DEFAULT 1,
+    UNIQUE(admin_telegram_id, event_type)
+)
+"""
+
+# Event log for notification summaries and tracking
+CREATE_NOTIFICATION_LOG_TABLE = """
+CREATE TABLE IF NOT EXISTS notification_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metadata TEXT,
+    sent_at TIMESTAMP,
+    included_in_summary_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 # Indexes for performance
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
@@ -196,6 +223,10 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_question_reports_status ON question_reports(status)",
     "CREATE INDEX IF NOT EXISTS idx_question_reviews_question_id ON question_reviews(question_id)",
     "CREATE INDEX IF NOT EXISTS idx_admins_telegram_id ON admins(telegram_id)",
+    "CREATE INDEX IF NOT EXISTS idx_admin_notification_settings_admin ON admin_notification_settings(admin_telegram_id)",
+    "CREATE INDEX IF NOT EXISTS idx_notification_log_event_type ON notification_log(event_type)",
+    "CREATE INDEX IF NOT EXISTS idx_notification_log_created_at ON notification_log(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_notification_log_summary ON notification_log(included_in_summary_at)",
 ]
 
 # All table creation statements in order
@@ -213,4 +244,6 @@ ALL_TABLES = [
     CREATE_QUESTION_STATS_TABLE,
     CREATE_QUESTION_REVIEWS_TABLE,
     CREATE_ADMINS_TABLE,
+    CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE,
+    CREATE_NOTIFICATION_LOG_TABLE,
 ]

@@ -330,6 +330,11 @@ async def run_bot() -> None:
         .build()
     )
 
+    # Initialize notification service
+    from src.services.notification_service import init_notification_service
+    init_notification_service(application)
+    logger.info("Notification service initialized")
+
     # Register handlers
     register_handlers(application)
 

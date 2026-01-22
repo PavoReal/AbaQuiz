@@ -849,6 +849,10 @@ async def report_submit_callback(
         report_type=report_type,
     )
 
+    # Notify admins
+    from src.services.notification_service import notify_question_report
+    await notify_question_report(question_id, user.id, report_type)
+
     # Show confirmation
     report_labels = {
         "incorrect_answer": "incorrect answer",

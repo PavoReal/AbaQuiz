@@ -1607,6 +1607,231 @@ class Repository:
                 return dict(zip(columns, row))
             return None
 
+    # =========================================================================
+    # Admin Notification Settings Operations
+    # =========================================================================
+
+    async def get_admin_notification_setting(
+        self,
+        admin_id: int,
+        event_type: str,
+    ) -> Optional[dict[str, Any]]:
+        """Get notification settings for a specific event type."""
+        async with self.db.execute(
+            """
+            SELECT * FROM admin_notification_settings
+            WHERE admin_telegram_id = ? AND event_type = ?
+            """,
+            (admin_id, event_type),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_all_admin_notification_settings(
+        self,
+        admin_id: int,
+    ) -> list[dict[str, Any]]:
+        """Get all notification settings for an admin."""
+        async with self.db.execute(
+            """
+            SELECT * FROM admin_notification_settings
+            WHERE admin_telegram_id = ?
+            ORDER BY event_type
+            """,
+            (admin_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def update_admin_notification_setting(
+        self,
+        admin_id: int,
+        event_type: str,
+        realtime_enabled: Optional[bool] = None,
+        summary_enabled: Optional[bool] = None,
+    ) -> None:
+        """Update or create notification setting for an event type."""
+        existing = await self.get_admin_notification_setting(admin_id, event_type)
+
+        if existing:
+            # Update existing
+            updates = []
+            params: list[Any] = []
+
+            if realtime_enabled is not None:
+                updates.append("realtime_enabled = ?")
+                params.append(realtime_enabled)
+            if summary_enabled is not None:
+                updates.append("summary_enabled = ?")
+                params.append(summary_enabled)
+
+            if updates:
+                params.extend([admin_id, event_type])
+                await self.db.execute(
+                    f"""
+                    UPDATE admin_notification_settings
+                    SET {", ".join(updates)}
+                    WHERE admin_telegram_id = ? AND event_type = ?
+                    """,
+                    params,
+                )
+        else:
+            # Create new
+            await self.db.execute(
+                """
+                INSERT INTO admin_notification_settings
+                (admin_telegram_id, event_type, realtime_enabled, summary_enabled)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    admin_id,
+                    event_type,
+                    realtime_enabled if realtime_enabled is not None else True,
+                    summary_enabled if summary_enabled is not None else True,
+                ),
+            )
+
+        await self.db.commit()
+
+    async def update_all_admin_notification_settings(
+        self,
+        admin_id: int,
+        event_types: list[str],
+        realtime_enabled: Optional[bool] = None,
+        summary_enabled: Optional[bool] = None,
+    ) -> None:
+        """Update notification settings for all event types."""
+        for event_type in event_types:
+            await self.update_admin_notification_setting(
+                admin_id, event_type, realtime_enabled, summary_enabled
+            )
+
+    # =========================================================================
+    # Notification Log Operations
+    # =========================================================================
+
+    async def log_notification_event(
+        self,
+        event_type: str,
+        priority: str,
+        title: str,
+        message: str,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> int:
+        """Log a notification event for tracking and summaries."""
+        metadata_json = json.dumps(metadata) if metadata else None
+
+        async with self.db.execute(
+            """
+            INSERT INTO notification_log
+            (event_type, priority, title, message, metadata)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (event_type, priority, title, message, metadata_json),
+        ) as cursor:
+            await self.db.commit()
+            return cursor.lastrowid or 0
+
+    async def mark_notification_sent(self, log_id: int) -> None:
+        """Mark a notification as sent."""
+        await self.db.execute(
+            """
+            UPDATE notification_log
+            SET sent_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (log_id,),
+        )
+        await self.db.commit()
+
+    async def get_unsummarized_events(
+        self,
+        hours: int = 24,
+    ) -> list[dict[str, Any]]:
+        """Get events that haven't been included in a summary yet."""
+        async with self.db.execute(
+            """
+            SELECT * FROM notification_log
+            WHERE included_in_summary_at IS NULL
+            AND created_at > datetime('now', ? || ' hours')
+            ORDER BY created_at ASC
+            """,
+            (f"-{hours}",),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("metadata"):
+                    try:
+                        d["metadata"] = json.loads(d["metadata"])
+                    except json.JSONDecodeError:
+                        pass
+                result.append(d)
+            return result
+
+    async def mark_events_summarized(self, event_ids: list[int]) -> None:
+        """Mark events as included in a summary."""
+        if not event_ids:
+            return
+
+        placeholders = ",".join("?" * len(event_ids))
+        await self.db.execute(
+            f"""
+            UPDATE notification_log
+            SET included_in_summary_at = CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders})
+            """,
+            event_ids,
+        )
+        await self.db.commit()
+
+    async def get_event_counts_by_type(
+        self,
+        hours: int = 24,
+    ) -> dict[str, int]:
+        """Get count of events by type for the last N hours."""
+        async with self.db.execute(
+            """
+            SELECT event_type, COUNT(*) as count
+            FROM notification_log
+            WHERE created_at > datetime('now', ? || ' hours')
+            GROUP BY event_type
+            """,
+            (f"-{hours}",),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["event_type"]: row["count"] for row in rows}
+
+    async def get_recent_notification_events(
+        self,
+        event_type: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Get recent notification events with optional filtering."""
+        query = "SELECT * FROM notification_log WHERE 1=1"
+        params: list[Any] = []
+
+        if event_type:
+            query += " AND event_type = ?"
+            params.append(event_type)
+
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        async with self.db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("metadata"):
+                    try:
+                        d["metadata"] = json.loads(d["metadata"])
+                    except json.JSONDecodeError:
+                        pass
+                result.append(d)
+            return result
+
 
 # Global repository instance
 _repository: Optional[Repository] = None

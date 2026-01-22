@@ -151,32 +151,43 @@ async def notify_admins_of_failure(
     """
     Notify admins about a delivery failure.
 
+    Uses the new notification service for proper event tracking.
+
     Args:
         application: Telegram bot application
         user_id: Failed user's Telegram ID
         error: Error message
     """
-    settings = get_settings()
-    repo = await get_repository(settings.database_path)
+    from src.services.notification_service import notify_delivery_failure
 
-    for admin_id in settings.admin_users:
-        admin_settings = await repo.get_admin_settings(admin_id)
+    await notify_delivery_failure(user_id, error)
 
-        # Check if alerts are enabled (default to True)
-        if admin_settings is None or admin_settings.get("alerts_enabled", True):
-            try:
-                await application.bot.send_message(
-                    chat_id=admin_id,
-                    text=(
-                        f"Delivery Failed\n\n"
-                        f"User: {user_id}\n"
-                        f"Error: {error}\n"
-                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"Action: Skipped delivery"
-                    ),
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify admin {admin_id}: {e}")
+
+def _parse_summary_time(time_str: str) -> tuple[int, int]:
+    """Parse HH:MM time string into hour and minute."""
+    try:
+        parts = time_str.split(":")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return 9, 0  # Default to 9:00 AM
+
+
+async def flush_notification_batch() -> None:
+    """Flush any batched notifications."""
+    from src.services.notification_service import get_notification_service
+
+    service = get_notification_service()
+    if service:
+        await service.flush_batch()
+
+
+async def send_daily_admin_summary() -> None:
+    """Send daily summary to admins."""
+    from src.services.notification_service import get_notification_service
+
+    service = get_notification_service()
+    if service:
+        await service.send_daily_summary()
 
 
 async def check_question_pool() -> None:
@@ -356,6 +367,29 @@ async def start_scheduler(application: Application) -> AsyncIOScheduler:
         ),
         id="pool_maintenance",
         name="Question pool maintenance",
+        replace_existing=True,
+    )
+
+    # Notification batch flush - run every 5 minutes
+    _scheduler.add_job(
+        flush_notification_batch,
+        CronTrigger(minute="*/5"),
+        id="notification_batch_flush",
+        name="Flush notification batches",
+        replace_existing=True,
+    )
+
+    # Daily admin summary - parse time from settings
+    summary_hour, summary_minute = _parse_summary_time(settings.summary_time)
+    _scheduler.add_job(
+        send_daily_admin_summary,
+        CronTrigger(
+            hour=summary_hour,
+            minute=summary_minute,
+            timezone="America/Los_Angeles",
+        ),
+        id="daily_admin_summary",
+        name="Daily admin summary",
         replace_existing=True,
     )
 
