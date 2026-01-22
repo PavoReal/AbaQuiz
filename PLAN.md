@@ -1,8 +1,175 @@
 # Implementation Plan: OpenAI File Search API Migration
 
+**Status: PHASE 1-7 COMPLETE** - Core migration finished. See Phase 8 below for remaining work.
+
 ## Overview
 
 Migrate from local file loading + Claude to OpenAI File Search API + GPT-5.2 exclusively. Remove all Anthropic dependencies.
+
+---
+
+## Bug Fix: seed_questions "no such table" Error
+
+### Problem
+
+Running `python -m src.scripts.seed_questions --count 25` fails with:
+```
+ERROR | Error generating for [Area]: no such table: questions
+```
+
+### Root Cause
+
+The `seed_questions.py` script calls `get_repository()` which only opens a database connection but does **not** initialize the database schema. The main bot (`src/main.py`) correctly calls `initialize_database()` and `run_migrations()` before using the repository, but the seeding script skips this step.
+
+**Affected file:** `src/scripts/seed_questions.py` line 155
+
+```python
+# Current (broken):
+repo = await get_repository(settings.database_path)
+
+# The tables don't exist yet!
+```
+
+### Fix
+
+Add database initialization before using the repository in `seed_questions.py`:
+
+**File:** `src/scripts/seed_questions.py`
+
+```python
+from src.database.migrations import initialize_database, run_migrations
+
+async def seed_questions(...):
+    settings = get_settings()
+
+    # Initialize database (create tables if needed)
+    await initialize_database(settings.database_path)
+    await run_migrations(settings.database_path)
+
+    repo = await get_repository(settings.database_path)
+    # ... rest of function
+```
+
+### Changes Required
+
+| File | Change |
+|------|--------|
+| `src/scripts/seed_questions.py` | Add import for `initialize_database`, `run_migrations` |
+| `src/scripts/seed_questions.py` | Call `initialize_database()` and `run_migrations()` in `seed_questions()` before `get_repository()` |
+
+### Verification
+
+1. Delete or rename the existing database to test fresh initialization:
+   ```bash
+   mv data/abaquiz.db data/abaquiz.db.bak
+   ```
+
+2. Run seed script:
+   ```bash
+   python -m src.scripts.seed_questions --count 5 --skip-dedup
+   ```
+
+3. Should complete without "no such table" errors.
+
+---
+
+## Phase 8: GPT 5.2 Thinking Budget (IN PROGRESS)
+
+### Current State
+
+The migration to GPT 5.2 is complete, but the **thinking budget** feature was never implemented. Additionally, there are stale references to Claude/Sonnet that need cleanup.
+
+### 8.1 Add Thinking Budget Configuration
+
+**File:** `config/config.json`
+
+Add `reasoning` settings under `question_generation`:
+```json
+"question_generation": {
+  "openai_model": "gpt-5.2",
+  "reasoning_effort": "low",
+  "reasoning_summary": "auto",
+  "max_tokens": 8192
+}
+```
+
+Valid values for `reasoning_effort`:
+| Value | Description |
+|-------|-------------|
+| `none` | No reasoning (gpt-5.1 only) |
+| `minimal` | Fastest, minimal reasoning |
+| `low` | Quick reasoning |
+| `medium` | Balanced (default) |
+| `high` | More thorough reasoning |
+
+Valid values for `reasoning_summary`: `auto`, `concise`, `detailed`
+
+**File:** `src/config/settings.py`
+
+Add properties:
+```python
+self.reasoning_effort = gen_config.get("reasoning_effort", "low")
+self.reasoning_summary = gen_config.get("reasoning_summary", "auto")
+```
+
+### 8.2 Update Question Generator to Use Thinking
+
+**File:** `src/services/question_generator.py`
+
+The Responses API uses `reasoning` as an object parameter:
+
+```python
+response = await self.client.responses.create(
+    model=self.settings.openai_model,
+    input=[
+        {"role": "developer", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ],
+    reasoning={
+        "effort": self.settings.reasoning_effort,    # "low", "medium", "high", etc.
+        "summary": self.settings.reasoning_summary,  # "auto", "concise", "detailed"
+    },
+    tools=[{
+        "type": "file_search",
+        "vector_store_ids": [store_id],
+    }],
+)
+```
+
+**Important API notes:**
+- `temperature`, `top_p`, and sampling params are NOT supported with reasoning
+- Use `max_output_tokens` for Responses API (not `max_tokens`)
+- Reasoning tokens are hidden but counted in `completion_tokens_details`
+
+Update comment on line 127 from "Claude 4.x optimized" to "GPT 5.2 with reasoning".
+
+### 8.3 Cleanup Stale References
+
+| File | Line(s) | Current | Fix |
+|------|---------|---------|-----|
+| `src/scripts/seed_questions.py` | 84 | "Sonnet for generation" | "GPT 5.2 for generation" |
+| `src/services/question_generator.py` | 127 | "Claude 4.x optimized" | "GPT 5.2 with reasoning" |
+| `src/web/generation_routes.py` | 266-267, 477-478 | Sonnet 4.5 pricing | GPT 5.2 pricing |
+| `src/database/models.py` | 33 | "Claude model ID" | "AI model ID" |
+| `src/database/migrations.py` | 90 | "Claude model" | "AI model" |
+| `src/config/settings.py` | 74-75 | `claude_model` setting | Remove or deprecate |
+| `src/services/usage_tracker.py` | 43, 85 | Uses `claude_model` | Use `openai_model` |
+
+### 8.4 Update Tests
+
+| File | Line(s) | Change |
+|------|---------|--------|
+| `tests/test_question_generator.py` | 31, 229, 333 | Change `claude-sonnet-4-5` → `gpt-5.2` |
+| `tests/test_pool_manager.py` | 27, 54 | Update mock model names to `gpt-5.2` |
+
+### 8.5 Verification
+
+1. `python -m src.scripts.seed_questions --dry-run` - Verify cost estimation works
+2. `pytest tests/` - Ensure tests pass
+3. `python -m src.scripts.seed_questions --count 5 --skip-dedup` - Generate small batch with reasoning
+4. Check logs for reasoning tokens in API response
+
+---
 
 ---
 
