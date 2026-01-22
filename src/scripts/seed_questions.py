@@ -30,6 +30,7 @@ from src.config.settings import get_settings
 from src.database.migrations import initialize_database, run_migrations
 from src.database.repository import get_repository
 from src.services.pool_manager import BCBA_WEIGHTS, PoolManager
+from src.services.question_generator import get_question_generator
 
 logger = get_logger(__name__)
 
@@ -267,6 +268,11 @@ async def _seed_questions_impl(
     }
     save_progress(state)
 
+    # Enable 24h cache retention for batch seeding (better cache hits across calls)
+    generator = get_question_generator()
+    generator.set_cache_retention("24h")
+    print("Cache retention: 24h (extended for batch seeding)")
+
     # Generate questions with parallel content area processing
     print("\nStarting parallel generation across all content areas...\n")
     start_time = datetime.now()
@@ -356,6 +362,9 @@ async def _seed_questions_impl(
     final_counts = await repo.get_question_pool_counts()
     final_total = sum(final_counts.values())
     print(f"\nFinal pool size: {final_total} questions")
+
+    # Reset cache retention to default
+    generator.set_cache_retention("in_memory")
 
     return {
         "generated": total_generated,

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from src.config.constants import ContentArea, QuestionType
 from src.config.logging import get_logger
 from src.config.settings import get_settings
+from src.services.usage_tracker import get_usage_tracker
 from src.services.vector_store_manager import get_vector_store_manager
 
 logger = get_logger(__name__)
@@ -363,6 +364,8 @@ class QuestionGenerator:
         self.vector_store_manager = get_vector_store_manager()
         # Cache for vector store ID
         self._vector_store_id: Optional[str] = None
+        # Cache retention setting: "in_memory" (5-10 min) or "24h" (extended)
+        self._cache_retention: str = "in_memory"
 
     async def _get_vector_store_id(self) -> str:
         """Get the vector store ID, caching the result.
@@ -416,6 +419,67 @@ class QuestionGenerator:
             openai.APIError: If SDK retries are exhausted
         """
         return await create_func(**kwargs)
+
+    def set_cache_retention(self, retention: str) -> None:
+        """Set cache retention mode for prompt caching.
+
+        Args:
+            retention: Either "in_memory" (5-10 min, default) or "24h" (extended)
+
+        Raises:
+            ValueError: If retention value is invalid
+        """
+        if retention not in ("in_memory", "24h"):
+            raise ValueError("retention must be 'in_memory' or '24h'")
+        self._cache_retention = retention
+        logger.debug(f"Cache retention set to: {retention}")
+
+    def _extract_response_usage(self, response) -> dict[str, int]:
+        """Extract token usage including cache info from Responses API.
+
+        Args:
+            response: OpenAI Responses API response object
+
+        Returns:
+            Dict with input_tokens, output_tokens, and cached_tokens
+        """
+        usage = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+        if hasattr(response, 'usage') and response.usage:
+            usage["input_tokens"] = getattr(response.usage, 'input_tokens', 0) or 0
+            usage["output_tokens"] = getattr(response.usage, 'output_tokens', 0) or 0
+            if hasattr(response.usage, 'input_tokens_details'):
+                details = response.usage.input_tokens_details
+                if details and hasattr(details, 'cached_tokens'):
+                    usage["cached_tokens"] = details.cached_tokens or 0
+        return usage
+
+    async def _track_usage(
+        self,
+        response,
+        content_area: ContentArea,
+    ) -> None:
+        """Track API usage from response including cache metrics.
+
+        Args:
+            response: OpenAI Responses API response object
+            content_area: Content area for the question
+        """
+        usage = self._extract_response_usage(response)
+        if usage["input_tokens"] > 0:
+            tracker = get_usage_tracker()
+            await tracker.track_usage(
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                cache_read_tokens=usage["cached_tokens"],
+                content_area=content_area.value,
+                model=self.settings.openai_model,
+            )
+            if usage["cached_tokens"] > 0:
+                cache_pct = (usage["cached_tokens"] / usage["input_tokens"]) * 100
+                logger.info(
+                    f"Cache hit: {usage['cached_tokens']}/{usage['input_tokens']} "
+                    f"input tokens ({cache_pct:.1f}%)"
+                )
 
     async def generate_question(
         self,
@@ -488,7 +552,7 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
 }}"""
 
         try:
-            # Use Responses API with file_search tool and reasoning
+            # Use Responses API with file_search tool, reasoning, and prompt caching
             response = await self._call_api_with_retry(
                 self.client.responses.create,
                 model=self.settings.openai_model,
@@ -504,7 +568,12 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
                     "type": "file_search",
                     "vector_store_ids": [store_id],
                 }],
+                prompt_cache_key=f"bcba-question-{content_area.value}",
+                prompt_cache_retention=self._cache_retention,
             )
+
+            # Track API usage including cache metrics
+            await self._track_usage(response, content_area)
 
             # Extract response text
             response_text = None
@@ -662,7 +731,7 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
 }}"""
 
         try:
-            # Use Responses API with file_search tool and reasoning
+            # Use Responses API with file_search tool, reasoning, and prompt caching
             response = await self._call_api_with_retry(
                 self.client.responses.create,
                 model=self.settings.openai_model,
@@ -678,7 +747,12 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
                     "type": "file_search",
                     "vector_store_ids": [store_id],
                 }],
+                prompt_cache_key=f"bcba-batch-{content_area.value}",
+                prompt_cache_retention=self._cache_retention,
             )
+
+            # Track API usage including cache metrics
+            await self._track_usage(response, content_area)
 
             # Extract response text
             response_text = None
