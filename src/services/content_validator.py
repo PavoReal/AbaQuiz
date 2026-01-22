@@ -1,30 +1,18 @@
 """
-Validate processed content files exist and are readable.
+Validate vector store configuration and content availability.
 
 Provides startup validation and health check functionality.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from src.config.constants import ContentArea
 from src.config.logging import get_logger
+from src.services.vector_store_manager import get_vector_store_manager
 
 logger = get_logger(__name__)
-
-# Required files per content area
-# Maps each content area to the files it depends on for question generation
-REQUIRED_FILES: dict[ContentArea, list[str]] = {
-    ContentArea.ETHICS: ["ethics/ethics_code.md", "core/handbook.md"],
-    ContentArea.SUPERVISION: ["supervision/curriculum.md", "core/handbook.md"],
-    ContentArea.CONCEPTS_AND_PRINCIPLES: ["core/task_list.md", "reference/glossary.md"],
-    ContentArea.MEASUREMENT: ["core/task_list.md", "core/tco.md"],
-    ContentArea.EXPERIMENTAL_DESIGN: ["core/task_list.md", "core/tco.md"],
-    ContentArea.BEHAVIOR_ASSESSMENT: ["core/task_list.md", "core/tco.md"],
-    ContentArea.BEHAVIOR_CHANGE_PROCEDURES: ["core/task_list.md", "reference/glossary.md"],
-    ContentArea.INTERVENTIONS: ["core/task_list.md", "core/tco.md"],
-    ContentArea.PHILOSOPHICAL_UNDERPINNINGS: ["core/task_list.md", "core/handbook.md"],
-}
 
 
 def get_project_root() -> Path:
@@ -37,149 +25,175 @@ def get_processed_content_dir() -> Path:
     return get_project_root() / "data" / "processed"
 
 
-def validate_content_files(content_dir: Path | None = None) -> dict[ContentArea, list[str]]:
+async def validate_vector_store() -> dict[str, Any]:
     """
-    Check all required content files exist.
-
-    Args:
-        content_dir: Directory containing processed content. Defaults to project's data/processed.
+    Validate that the vector store is configured and populated.
 
     Returns:
-        Dict of content areas with lists of missing files.
-        Empty dict means all files are present.
-
-    Raises:
-        RuntimeError: If critical files are missing and generation cannot proceed.
+        Dict with validation results including:
+        - configured: Whether vector store is set up
+        - file_count: Number of files in the store
+        - local_file_count: Number of local markdown files
+        - synced: Whether counts match
+        - status: "healthy", "degraded", or "error"
     """
-    if content_dir is None:
-        content_dir = get_processed_content_dir()
+    manager = get_vector_store_manager()
+    status = await manager.get_status()
 
-    missing: dict[ContentArea, list[str]] = {}
+    result: dict[str, Any] = {
+        "configured": status["configured"],
+        "vector_store_id": status.get("vector_store_id"),
+        "local_file_count": status.get("local_file_count", 0),
+        "tracked_file_count": status.get("tracked_file_count", 0),
+    }
 
-    for area, files in REQUIRED_FILES.items():
-        area_missing = []
-        for file_path in files:
-            full_path = content_dir / file_path
-            if not full_path.exists():
-                area_missing.append(file_path)
-                logger.warning(f"Missing content file for {area.value}: {file_path}")
-            elif full_path.stat().st_size == 0:
-                area_missing.append(file_path)
-                logger.warning(f"Empty content file for {area.value}: {file_path}")
+    if not status["configured"]:
+        result["status"] = "error"
+        result["message"] = "Vector store not configured. Run: python -m src.scripts.manage_vector_store create"
+        return result
 
-        if area_missing:
-            missing[area] = area_missing
+    # Check if files are synced
+    local_count = status.get("local_file_count", 0)
+    tracked_count = status.get("tracked_file_count", 0)
 
-    if missing:
-        logger.error(f"Content validation failed: {len(missing)} areas have missing files")
-        # List which areas can still generate questions
-        valid_areas = [a for a in ContentArea if a not in missing]
-        logger.info(f"Valid content areas: {[a.value for a in valid_areas]}")
+    if local_count == 0:
+        result["status"] = "error"
+        result["message"] = "No local content files found in data/processed/"
+        return result
 
-    return missing
+    if tracked_count == 0:
+        result["status"] = "error"
+        result["message"] = "No files uploaded to vector store. Run: python -m src.scripts.manage_vector_store sync"
+        return result
+
+    if local_count != tracked_count:
+        result["status"] = "degraded"
+        result["message"] = f"File count mismatch: {local_count} local, {tracked_count} in store. Run sync."
+        result["synced"] = False
+    else:
+        result["status"] = "healthy"
+        result["message"] = f"Vector store healthy with {tracked_count} files"
+        result["synced"] = True
+
+    # Include OpenAI store status if available
+    if "store_file_counts" in status:
+        result["store_file_counts"] = status["store_file_counts"]
+        if status["store_file_counts"].get("failed", 0) > 0:
+            result["status"] = "degraded"
+            result["message"] += f" ({status['store_file_counts']['failed']} failed)"
+
+    return result
 
 
-def validate_content_on_startup(strict: bool = False) -> bool:
+async def validate_vector_store_on_startup(strict: bool = False) -> bool:
     """
-    Validate content files on application startup.
+    Validate vector store configuration on application startup.
 
     Args:
-        strict: If True, raise RuntimeError on any missing files.
+        strict: If True, raise RuntimeError if vector store is not ready.
                 If False (default), log warnings but continue.
 
     Returns:
-        True if all files present, False otherwise.
+        True if vector store is healthy, False otherwise.
 
     Raises:
-        RuntimeError: If strict=True and files are missing.
+        RuntimeError: If strict=True and vector store is not ready.
     """
-    content_dir = get_processed_content_dir()
+    result = await validate_vector_store()
 
-    if not content_dir.exists():
-        msg = (
-            f"Processed content directory does not exist: {content_dir}\n"
-            f"Run preprocessing first: python -m src.preprocessing.run_preprocessing"
-        )
+    if result["status"] == "error":
+        msg = f"Vector store validation failed: {result['message']}"
         logger.error(msg)
         if strict:
             raise RuntimeError(msg)
         return False
 
-    missing = validate_content_files(content_dir)
+    if result["status"] == "degraded":
+        logger.warning(f"Vector store degraded: {result['message']}")
+        return True  # Can still function
 
-    if missing:
-        areas_str = ", ".join(a.value for a in missing.keys())
-        msg = (
-            f"Content files missing for {len(missing)} area(s): {areas_str}\n"
-            f"Question generation will fail for these areas.\n"
-            f"Run preprocessing: python -m src.preprocessing.run_preprocessing"
-        )
-        logger.warning(msg)
-        if strict:
-            raise RuntimeError(msg)
-        return False
-
-    logger.info(f"Content validation passed: all {len(ContentArea)} areas have required files")
+    logger.info(f"Vector store validation passed: {result['message']}")
     return True
 
 
-def get_content_health() -> dict[str, Any]:
+def validate_content_on_startup(strict: bool = False) -> bool:
     """
-    Return health status of content files for monitoring.
+    Synchronous wrapper for vector store validation on startup.
+
+    This maintains backwards compatibility with the existing startup flow.
+
+    Args:
+        strict: If True, raise RuntimeError if vector store is not ready.
 
     Returns:
-        Dict with status, counts, and details about missing files.
+        True if vector store is healthy, False otherwise.
     """
-    content_dir = get_processed_content_dir()
+    # Check if we're already in an async context
+    try:
+        asyncio.get_running_loop()
+        # We're in an async context, can't use asyncio.run()
+        # Create a task and return a placeholder
+        logger.warning("Cannot validate vector store synchronously from async context")
+        return True
+    except RuntimeError:
+        # Not in async context, safe to use asyncio.run()
+        return asyncio.run(validate_vector_store_on_startup(strict))
 
-    # Check if directory exists
-    if not content_dir.exists():
-        return {
-            "status": "error",
-            "message": f"Content directory not found: {content_dir}",
-            "total_areas": len(ContentArea),
-            "valid_areas": 0,
-            "missing_files": {a.value: REQUIRED_FILES[a] for a in ContentArea},
+
+async def get_content_health() -> dict[str, Any]:
+    """
+    Return health status of vector store for monitoring.
+
+    Returns:
+        Dict with status, counts, and configuration details.
+    """
+    manager = get_vector_store_manager()
+
+    # Get vector store status
+    vs_status = await validate_vector_store()
+
+    # Get list of tracked files
+    files = await manager.list_files()
+    file_list = [
+        {
+            "filename": f.filename,
+            "size_kb": round(f.size_bytes / 1024, 1),
+            "uploaded_at": f.uploaded_at,
         }
-
-    missing = validate_content_files(content_dir)
-
-    # Get file stats for present files
-    file_stats: dict[str, dict[str, Any]] = {}
-    all_files = set()
-    for files in REQUIRED_FILES.values():
-        all_files.update(files)
-
-    for file_path in all_files:
-        full_path = content_dir / file_path
-        if full_path.exists():
-            stat = full_path.stat()
-            file_stats[file_path] = {
-                "size_kb": round(stat.st_size / 1024, 1),
-                "exists": True,
-            }
-        else:
-            file_stats[file_path] = {"exists": False}
-
-    status = "healthy" if not missing else "degraded"
-    valid_count = len(ContentArea) - len(missing)
+        for f in files
+    ]
 
     return {
-        "status": status,
+        "status": vs_status["status"],
+        "message": vs_status.get("message", ""),
+        "vector_store_id": vs_status.get("vector_store_id"),
         "total_areas": len(ContentArea),
-        "valid_areas": valid_count,
-        "missing_files": {k.value: v for k, v in missing.items()},
-        "content_dir": str(content_dir),
-        "file_stats": file_stats,
+        "local_file_count": vs_status.get("local_file_count", 0),
+        "tracked_file_count": vs_status.get("tracked_file_count", 0),
+        "synced": vs_status.get("synced", False),
+        "files": file_list,
+        "content_dir": str(get_processed_content_dir()),
     }
 
 
 def get_valid_content_areas() -> list[ContentArea]:
     """
-    Get list of content areas that have all required files.
+    Get list of content areas available for question generation.
+
+    With vector store, all areas are available if the store is configured.
 
     Returns:
-        List of ContentArea enums that can generate questions.
+        List of all ContentArea enums if vector store is healthy,
+        empty list otherwise.
     """
-    missing = validate_content_files()
-    return [area for area in ContentArea if area not in missing]
+    try:
+        asyncio.get_running_loop()
+        # In async context
+        logger.warning("get_valid_content_areas called from async context, returning all areas")
+        return list(ContentArea)
+    except RuntimeError:
+        # Not in async context
+        result = asyncio.run(validate_vector_store())
+        if result["status"] in ("healthy", "degraded"):
+            return list(ContentArea)
+        return []

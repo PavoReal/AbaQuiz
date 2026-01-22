@@ -2,21 +2,17 @@
 Question pool management service for AbaQuiz.
 
 Manages the question pool using active-user-based thresholds,
-BCBA exam weight distribution, and Haiku-based deduplication.
-Uses AsyncAnthropic for non-blocking API calls.
+BCBA exam weight distribution, and embedding-based deduplication.
 """
 
 import asyncio
-import json
 from typing import Any, Optional
-
-import anthropic
-from anthropic import AsyncAnthropic
 
 from src.config.constants import ContentArea
 from src.config.logging import get_logger
 from src.config.settings import get_settings
 from src.database.repository import get_repository
+from src.services.dedup_service import get_dedup_service
 from src.services.question_generator import get_question_generator
 
 logger = get_logger(__name__)
@@ -34,53 +30,6 @@ BCBA_WEIGHTS: dict[ContentArea, float] = {
     ContentArea.PHILOSOPHICAL_UNDERPINNINGS: 0.05,
 }
 
-# Enhanced deduplication prompt with examples and clear confidence criteria
-DEDUP_PROMPT = """Determine if a new quiz question is too similar to existing questions in the pool.
-
-<similarity_criteria>
-TOO SIMILAR (reject as duplicate):
-- Tests the exact same specific concept with only superficial wording changes
-- Scenarios are nearly identical with minor detail swaps (names, numbers, settings)
-- Core knowledge being tested is identical, just phrased differently
-- Would feel repetitive to a student seeing both questions
-
-NOT TOO SIMILAR (accept as unique):
-- Tests different aspects or applications of the same broad topic
-- Requires different reasoning paths or knowledge application
-- Presents meaningfully different scenarios even if on the same topic
-- Would provide additional learning value to a student
-</similarity_criteria>
-
-<examples>
-SIMILAR - Should REJECT:
-- "What is the primary purpose of an FBA?" vs "The main goal of a functional behavior assessment is to..."
-- "John hits when denied iPad access. What is the likely function?" vs "Sarah hits when her tablet is taken away. What function is this?"
-- "Which is an example of positive reinforcement?" vs "Positive reinforcement is demonstrated when..."
-
-NOT SIMILAR - Should ACCEPT:
-- "What is the primary purpose of an FBA?" vs "Which assessment method identifies if behavior is maintained by escape?"
-- "John hits when denied iPad - what function?" vs "After FBA reveals attention function, which intervention is appropriate?"
-- "Define positive reinforcement" vs "A child receives candy after cleaning. What happens to cleaning behavior?"
-</examples>
-
-<confidence_levels>
-- high: Nearly identical questions testing the exact same specific concept - REJECT
-- medium: Same general topic area but possibly testing different specific aspects - consider accepting
-- low: Related topic but clearly different focus or application - ACCEPT
-</confidence_levels>
-
-<new_question>
-{new_question}
-</new_question>
-
-<existing_questions>
-{existing_questions}
-</existing_questions>
-
-<output_format>
-Respond with valid JSON only:
-{{"is_duplicate": true/false, "reason": "brief specific explanation", "confidence": "high/medium/low"}}
-</output_format>"""
 
 
 class PoolManager:
@@ -89,7 +38,7 @@ class PoolManager:
 
     Triggers generation when avg unseen questions per active user < threshold.
     Uses BCBA exam weights for content area distribution.
-    Uses Claude Haiku for deduplication checking with rate limiting.
+    Uses embedding-based deduplication checking.
     """
 
     DEFAULT_THRESHOLD = 20
@@ -99,27 +48,21 @@ class PoolManager:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        # Use AsyncAnthropic for non-blocking API calls
-        self.client = AsyncAnthropic(
-            api_key=self.settings.anthropic_api_key,
-            max_retries=1,
-        )
+
+        # Use embedding-based deduplication service
+        self.dedup_service = get_dedup_service()
 
         # Load concurrency settings from config
         self.max_concurrent_generation = self.settings.pool_max_concurrent_generation
-        self.max_concurrent_dedup = self.settings.pool_max_concurrent_dedup
 
-        # Semaphores for rate limiting API calls
+        # Semaphore for rate limiting generation API calls
         self._generation_semaphore = asyncio.Semaphore(self.max_concurrent_generation)
-        self._dedup_semaphore = asyncio.Semaphore(self.max_concurrent_dedup)
 
         # Load pool management settings from settings class
         self.threshold = self.settings.pool_threshold
         self.batch_size = self.settings.pool_batch_size
-        self.dedup_model = self.settings.pool_dedup_model
         self.dedup_check_limit = self.settings.pool_dedup_check_limit
-        self.dedup_confidence_threshold = self.settings.pool_dedup_confidence_threshold
-        self.dedup_early_exit_batches = self.settings.pool_dedup_early_exit_batches
+        self.dedup_threshold = getattr(self.settings, 'pool_dedup_threshold', 0.85)
         self.generation_batch_size = self.settings.pool_generation_batch_size
 
         # Load BCBA weights from config or use defaults
@@ -460,125 +403,25 @@ class PoolManager:
         """
         Check if a new question is too similar to existing questions.
 
-        Uses Claude Haiku for semantic similarity checking with optimizations:
-        - Rate limiting via semaphore
-        - Confidence-based filtering: only reject high-confidence duplicates
-        - Early exit: stop after N consecutive clean batches
-
+        Uses embedding-based cosine similarity for efficient deduplication.
         Returns False (not a duplicate) if the check fails to avoid blocking.
         """
         if not existing_questions:
             return False
 
-        # Format new question
-        new_q_text = (
-            f"Question: {new_question['question']}\n"
-            f"Options: {json.dumps(new_question['options'])}\n"
-            f"Answer: {new_question['correct_answer']}"
+        result = await self.dedup_service.check_duplicate(
+            new_question,
+            existing_questions,
+            threshold=self.dedup_threshold,
         )
 
-        # Batch existing questions (check against 5 at a time for efficiency)
-        batch_size = 5
-        consecutive_clean = 0
-
-        for i in range(0, len(existing_questions), batch_size):
-            batch = existing_questions[i : i + batch_size]
-
-            existing_text = "\n\n".join(
-                f"[{j + 1}] Question: {q.get('content', q.get('question', ''))}\n"
-                f"Options: {json.dumps(q['options'])}\n"
-                f"Answer: {q['correct_answer']}"
-                for j, q in enumerate(batch)
+        if result.is_duplicate:
+            logger.debug(
+                f"Duplicate rejected (similarity={result.similarity:.3f}): "
+                f"{result.matched_question[:50] if result.matched_question else 'unknown'}..."
             )
 
-            prompt = DEDUP_PROMPT.format(
-                new_question=new_q_text,
-                existing_questions=existing_text,
-            )
-
-            try:
-                # Use semaphore for rate limiting
-                async with self._dedup_semaphore:
-                    response = await self.client.messages.create(
-                        model=self.dedup_model,
-                        max_tokens=256,
-                        messages=[{"role": "user", "content": prompt}],
-                    )
-
-                # Extract text from response
-                content_block = response.content[0]
-                if not hasattr(content_block, "text"):
-                    logger.warning("Dedup response has no text content")
-                    consecutive_clean += 1
-                    continue
-
-                result_text = content_block.text
-                result = self._parse_dedup_result(result_text)
-
-                if result and result.get("is_duplicate"):
-                    confidence = result.get("confidence", "high")
-
-                    # Confidence-based filtering: only reject high confidence
-                    # (or medium if threshold is not set to "high")
-                    should_reject = confidence == "high" or (
-                        confidence == "medium"
-                        and self.dedup_confidence_threshold != "high"
-                    )
-
-                    if should_reject:
-                        logger.debug(
-                            f"Duplicate rejected ({confidence}): "
-                            f"{result.get('reason', 'unknown')}"
-                        )
-                        return True
-                    else:
-                        logger.debug(
-                            f"Duplicate skipped ({confidence} < threshold): "
-                            f"{result.get('reason', 'unknown')}"
-                        )
-                        consecutive_clean += 1
-                else:
-                    consecutive_clean += 1
-
-                # Early exit: if we've seen N consecutive clean batches, assume no dup
-                if consecutive_clean >= self.dedup_early_exit_batches:
-                    logger.debug(
-                        f"Early exit after {consecutive_clean} clean batches"
-                    )
-                    return False
-
-            except anthropic.RateLimitError as e:
-                # SDK retries exhausted (5 attempts with exponential backoff + jitter)
-                # Allow question to proceed rather than blocking the pipeline
-                logger.warning(f"Dedup rate limit (SDK retries exhausted): {e}")
-                return False
-
-            except Exception as e:
-                # Log warning but don't block on dedup failure
-                logger.warning(f"Dedup check failed, allowing question: {e}")
-                return False
-
-        return False
-
-    def _parse_dedup_result(self, text: str) -> Optional[dict[str, Any]]:
-        """Parse deduplication result JSON."""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Try to find JSON in response
-        import re
-
-        json_match = re.search(r"\{[\s\S]*\}", text)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-
-        logger.warning(f"Failed to parse dedup result: {text[:100]}...")
-        return None
+        return result.is_duplicate
 
 
 # Singleton instance

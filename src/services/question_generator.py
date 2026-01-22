@@ -1,14 +1,14 @@
 """
-Question generation service using OpenAI GPT 5.2 API.
+Question generation service using OpenAI GPT 5.2 API with File Search.
 
-Generates BCBA exam questions from pre-processed content.
+Generates BCBA exam questions using OpenAI's file search tool to retrieve
+relevant content from the vector store containing BCBA study materials.
 Uses AsyncOpenAI client with structured outputs for reliable JSON responses.
 """
 
 import json
 import random
 from enum import Enum
-from pathlib import Path
 from typing import Any, Literal, Optional
 
 import openai
@@ -18,8 +18,23 @@ from pydantic import BaseModel, Field
 from src.config.constants import ContentArea, QuestionType
 from src.config.logging import get_logger
 from src.config.settings import get_settings
+from src.services.vector_store_manager import get_vector_store_manager
 
 logger = get_logger(__name__)
+
+
+# Semantic queries for content area retrieval via file_search
+CONTENT_AREA_QUERIES: dict[ContentArea, str] = {
+    ContentArea.ETHICS: "BACB ethics code professional conduct multiple relationships confidentiality informed consent supervisory responsibilities",
+    ContentArea.BEHAVIOR_ASSESSMENT: "functional behavior assessment FBA indirect direct assessment preference assessment baseline data collection",
+    ContentArea.BEHAVIOR_CHANGE_PROCEDURES: "reinforcement punishment extinction differential reinforcement DRA DRI DRO shaping chaining prompting",
+    ContentArea.CONCEPTS_AND_PRINCIPLES: "operant respondent conditioning stimulus control verbal behavior mand tact echoic motivating operations",
+    ContentArea.MEASUREMENT: "data collection frequency rate duration latency IOA interobserver agreement graphing visual analysis",
+    ContentArea.EXPERIMENTAL_DESIGN: "single subject design reversal multiple baseline alternating treatment changing criterion replication",
+    ContentArea.INTERVENTIONS: "evidence-based practice treatment integrity social validity intervention selection crisis protocols",
+    ContentArea.SUPERVISION: "RBT supervision feedback performance monitoring training competency assessment documentation",
+    ContentArea.PHILOSOPHICAL_UNDERPINNINGS: "radical behaviorism determinism selectionism parsimony pragmatism dimensions of ABA",
+}
 
 
 # Pydantic models for structured outputs
@@ -305,107 +320,39 @@ Philosophical Underpinnings - Key topics to assess:
 
 
 class QuestionGenerator:
-    """Generates quiz questions using OpenAI GPT 5.2 API with async support."""
+    """Generates quiz questions using OpenAI GPT 5.2 API with file search."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
         # Use AsyncOpenAI for non-blocking API calls
         self.client = AsyncOpenAI(
             api_key=self.settings.openai_api_key,
-            max_retries=1,
+            max_retries=3,
         )
-        # Use absolute path from project root
-        self.processed_content_dir = Path(__file__).parent.parent.parent / "data" / "processed"
-        # Content cache to avoid repeated file reads
-        self._content_cache: dict[ContentArea, str] = {}
+        self.vector_store_manager = get_vector_store_manager()
+        # Cache for vector store ID
+        self._vector_store_id: Optional[str] = None
 
-    def _load_content_for_area(self, content_area: ContentArea) -> str:
-        """Load pre-processed markdown content for a content area.
-
-        Uses caching to avoid repeated file reads for batch operations.
+    async def _get_vector_store_id(self) -> str:
+        """Get the vector store ID, caching the result.
 
         Raises:
-            FileNotFoundError: If no content files exist for the area.
+            RuntimeError: If vector store is not configured.
         """
-        # Check cache first
-        if content_area in self._content_cache:
-            return self._content_cache[content_area]
+        if self._vector_store_id is None:
+            self._vector_store_id = await self.vector_store_manager.get_store_id()
 
-        # Map content areas to file paths
-        area_files = {
-            ContentArea.PHILOSOPHICAL_UNDERPINNINGS: [
-                "core/task_list.md",
-                "core/handbook.md",
-            ],
-            ContentArea.CONCEPTS_AND_PRINCIPLES: [
-                "core/task_list.md",
-                "reference/glossary.md",
-            ],
-            ContentArea.MEASUREMENT: [
-                "core/task_list.md",
-                "core/tco.md",
-            ],
-            ContentArea.EXPERIMENTAL_DESIGN: [
-                "core/task_list.md",
-                "core/tco.md",
-            ],
-            ContentArea.ETHICS: [
-                "ethics/ethics_code.md",
-                "core/handbook.md",
-            ],
-            ContentArea.BEHAVIOR_ASSESSMENT: [
-                "core/task_list.md",
-                "core/tco.md",
-            ],
-            ContentArea.BEHAVIOR_CHANGE_PROCEDURES: [
-                "core/task_list.md",
-                "reference/glossary.md",
-            ],
-            ContentArea.INTERVENTIONS: [
-                "core/task_list.md",
-                "core/tco.md",
-            ],
-            ContentArea.SUPERVISION: [
-                "supervision/curriculum.md",
-                "core/handbook.md",
-            ],
-        }
-
-        content_parts = []
-        missing_files = []
-
-        for file_path in area_files.get(content_area, []):
-            full_path = self.processed_content_dir / file_path
-            if full_path.exists():
-                content = full_path.read_text(encoding="utf-8")
-                if content.strip():
-                    content_parts.append(content)
-                else:
-                    logger.warning(f"Empty content file: {full_path}")
-                    missing_files.append(file_path)
-            else:
-                missing_files.append(file_path)
-
-        if missing_files:
-            logger.warning(f"Missing files for {content_area.value}: {missing_files}")
-
-        if not content_parts:
-            raise FileNotFoundError(
-                f"No content available for {content_area.value}. "
-                f"Missing files: {missing_files}. "
-                f"Content dir: {self.processed_content_dir}. "
-                f"Run preprocessing first: python -m src.preprocessing.run_preprocessing"
+        if not self._vector_store_id:
+            raise RuntimeError(
+                "Vector store not configured. Run: python -m src.scripts.manage_vector_store create"
             )
 
-        content = "\n\n---\n\n".join(content_parts)
-        # Cache the loaded content
-        self._content_cache[content_area] = content
-        return content
+        return self._vector_store_id
 
-    def clear_content_cache(self) -> None:
-        """Clear the content cache. Useful after content updates."""
-        self._content_cache.clear()
-        logger.debug("Content cache cleared")
+    def clear_vector_store_cache(self) -> None:
+        """Clear the vector store ID cache. Useful after store recreation."""
+        self._vector_store_id = None
+        logger.debug("Vector store ID cache cleared")
 
     def _select_category(self) -> QuestionCategory:
         """Select a question category based on distribution weights."""
@@ -446,7 +393,10 @@ class QuestionGenerator:
         question_category: Optional[QuestionCategory] = None,
     ) -> Optional[dict[str, Any]]:
         """
-        Generate a single question for a content area using structured outputs.
+        Generate a single question for a content area using file search.
+
+        Uses OpenAI's file_search tool to retrieve relevant content from the
+        vector store before generating the question.
 
         Args:
             content_area: The BCBA content area
@@ -456,6 +406,13 @@ class QuestionGenerator:
         Returns:
             Question dict or None if generation fails
         """
+        # Get vector store ID
+        try:
+            store_id = await self._get_vector_store_id()
+        except RuntimeError as e:
+            logger.error(f"Cannot generate question: {e}")
+            return None
+
         # Determine question type
         if question_type is None:
             mc_ratio = self.settings.type_distribution.get("multiple_choice", 0.8)
@@ -469,13 +426,6 @@ class QuestionGenerator:
         if question_category is None:
             question_category = self._select_category()
 
-        # Load content
-        try:
-            content = self._load_content_for_area(content_area)
-        except FileNotFoundError as e:
-            logger.error(f"Cannot generate question: {e}")
-            return None
-
         # Build user prompt with category and content-area specific guidance
         type_instruction = (
             "Create a multiple choice question with exactly 4 options (A, B, C, D)."
@@ -488,8 +438,11 @@ class QuestionGenerator:
         )
 
         area_guidance = CONTENT_AREA_GUIDANCE.get(content_area, "")
+        area_query = CONTENT_AREA_QUERIES.get(content_area, content_area.value)
 
-        user_prompt = f"""Based on the following BCBA study content about {content_area.value}, {type_instruction}
+        user_prompt = f"""Search the BCBA study materials for content about: {area_query}
+
+Based on the retrieved content about {content_area.value}, {type_instruction}
 
 <question_style>
 {category_instruction}
@@ -497,41 +450,61 @@ class QuestionGenerator:
 
 {area_guidance}
 
-<study_content>
-{content}
-</study_content>
-
 Generate a challenging but fair exam-style question that matches the requested style. Set the category field to "{question_category.value}".
 
-Include a source_citation with the specific section, heading, and a brief quote from the study content that this question is based on."""
+Include a source_citation with the specific section, heading, and a brief quote from the retrieved content that this question is based on.
+
+IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
+{{
+  "question": "...",
+  "type": "multiple_choice" or "true_false",
+  "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or {{"True": "...", "False": "..."}},
+  "correct_answer": "A" or "B" or "C" or "D" or "True" or "False",
+  "explanation": "...",
+  "category": "{question_category.value}",
+  "source_citation": {{"section": "...", "heading": "...", "quote": "..."}}
+}}"""
 
         try:
-            # Use structured outputs for guaranteed valid JSON (GPT 5.2)
+            # Use Responses API with file_search tool
             response = await self._call_api_with_retry(
-                self.client.chat.completions.create,
+                self.client.responses.create,
                 model=self.settings.openai_model,
-                max_completion_tokens=self.settings.generation_max_tokens,
-                messages=[
-                    {"role": "developer", "content": SYSTEM_PROMPT},
+                input=[
+                    {"role": "developer", "content": SYSTEM_PROMPT + "\n\nYou MUST respond with valid JSON only, no markdown formatting."},
                     {"role": "user", "content": user_prompt},
                 ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "generated_question",
-                        "strict": True,
-                        "schema": GeneratedQuestion.model_json_schema(),
-                    },
-                },
+                tools=[{
+                    "type": "file_search",
+                    "vector_store_ids": [store_id],
+                }],
             )
 
-            # Parse guaranteed-valid JSON response
-            response_content = response.choices[0].message.content
-            if not response_content:
-                logger.error("Response has no content")
+            # Extract response text
+            response_text = None
+            for item in response.output:
+                if item.type == "message":
+                    for content in item.content:
+                        if content.type == "output_text":
+                            response_text = content.text
+                            break
+
+            if not response_text:
+                logger.error("Response has no text content")
                 return None
 
-            question_data = json.loads(response_content)
+            # Clean up response - remove markdown code blocks if present
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                # Remove markdown code block wrapper
+                lines = response_text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                response_text = "\n".join(lines)
+
+            question_data = json.loads(response_text)
 
             # Normalize options - filter out None values
             raw_opts = question_data.get("options", {})
@@ -545,8 +518,8 @@ Include a source_citation with the specific section, heading, and a brief quote 
 
             # Log usage
             logger.info(
-                f"Generated {question_category.value} question for {content_area.value}: "
-                f"{response.usage.prompt_tokens} in, {response.usage.completion_tokens} out"
+                f"Generated {question_category.value} question for {content_area.value} "
+                f"using file_search"
             )
 
             return question_data
@@ -554,7 +527,7 @@ Include a source_citation with the specific section, heading, and a brief quote 
         except openai.APIError as e:
             logger.error(f"OpenAI API error: {e}")
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error (unexpected with structured outputs): {e}")
+            logger.error(f"JSON parse error: {e}")
         except Exception as e:
             logger.error(f"Question generation error: {e}")
 
@@ -600,9 +573,10 @@ Include a source_citation with the specific section, heading, and a brief quote 
         count: int = 5,
     ) -> list[dict[str, Any]]:
         """
-        Generate multiple questions in a single API call using structured outputs.
+        Generate multiple questions in a single API call using file search.
 
-        This is more efficient than generating one question at a time.
+        Uses OpenAI's file_search tool to retrieve relevant content from the
+        vector store before generating the questions.
 
         Args:
             content_area: The BCBA content area
@@ -611,20 +585,24 @@ Include a source_citation with the specific section, heading, and a brief quote 
         Returns:
             List of question dicts
         """
+        # Get vector store ID
         try:
-            content = self._load_content_for_area(content_area)
-        except FileNotFoundError as e:
+            store_id = await self._get_vector_store_id()
+        except RuntimeError as e:
             logger.error(f"Cannot generate batch: {e}")
             return []
 
         area_guidance = CONTENT_AREA_GUIDANCE.get(content_area, "")
+        area_query = CONTENT_AREA_QUERIES.get(content_area, content_area.value)
 
         # Calculate category distribution for this batch
         scenario_count = round(count * 0.4)
         definition_count = round(count * 0.3)
         application_count = count - scenario_count - definition_count
 
-        user_prompt = f"""Generate exactly {count} BCBA exam questions about {content_area.value}.
+        user_prompt = f"""Search the BCBA study materials for content about: {area_query}
+
+Generate exactly {count} BCBA exam questions about {content_area.value} based on the retrieved content.
 
 {area_guidance}
 
@@ -637,41 +615,64 @@ Generate this specific mix of question types:
 Approximately {round(count * 0.8)} should be multiple choice, {count - round(count * 0.8)} should be true/false.
 </distribution_requirements>
 
-<study_content>
-{content}
-</study_content>
-
 Generate {count} diverse questions testing different concepts within this area.
 
-For each question, include a source_citation with the specific section, heading, and a brief quote from the study content that the question is based on."""
+For each question, include a source_citation with the specific section, heading, and a brief quote from the retrieved content that the question is based on.
+
+IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
+{{
+  "questions": [
+    {{
+      "question": "...",
+      "type": "multiple_choice" or "true_false",
+      "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or {{"True": "...", "False": "..."}},
+      "correct_answer": "A" or "B" or "C" or "D" or "True" or "False",
+      "explanation": "...",
+      "category": "scenario" or "definition" or "application",
+      "source_citation": {{"section": "...", "heading": "...", "quote": "..."}}
+    }}
+  ]
+}}"""
 
         try:
-            # Use structured outputs - guarantees valid JSON matching schema (GPT 5.2)
+            # Use Responses API with file_search tool
             response = await self._call_api_with_retry(
-                self.client.chat.completions.create,
+                self.client.responses.create,
                 model=self.settings.openai_model,
-                max_completion_tokens=self.settings.generation_max_tokens,
-                messages=[
-                    {"role": "developer", "content": BATCH_SYSTEM_PROMPT},
+                input=[
+                    {"role": "developer", "content": BATCH_SYSTEM_PROMPT + "\n\nYou MUST respond with valid JSON only, no markdown formatting."},
                     {"role": "user", "content": user_prompt},
                 ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "question_batch",
-                        "strict": True,
-                        "schema": QuestionBatch.model_json_schema(),
-                    },
-                },
+                tools=[{
+                    "type": "file_search",
+                    "vector_store_ids": [store_id],
+                }],
             )
 
-            # Guaranteed valid JSON - just parse it
-            response_content = response.choices[0].message.content
-            if not response_content:
-                logger.error("Batch response has no content")
+            # Extract response text
+            response_text = None
+            for item in response.output:
+                if item.type == "message":
+                    for content in item.content:
+                        if content.type == "output_text":
+                            response_text = content.text
+                            break
+
+            if not response_text:
+                logger.error("Batch response has no text content")
                 return []
 
-            data = json.loads(response_content)
+            # Clean up response - remove markdown code blocks if present
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                response_text = "\n".join(lines)
+
+            data = json.loads(response_text)
             questions = data["questions"]
 
             # Normalize each question
@@ -690,8 +691,7 @@ For each question, include a source_citation with the specific section, heading,
                     q["category"] = "scenario"
 
             logger.info(
-                f"Generated {len(questions)} questions for {content_area.value}: "
-                f"{response.usage.prompt_tokens} in, {response.usage.completion_tokens} out"
+                f"Generated {len(questions)} questions for {content_area.value} using file_search"
             )
 
             return questions

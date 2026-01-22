@@ -15,9 +15,9 @@ Quick reference for Claude Code working with this repository. Keep this concise 
 ## Tech Stack
 
 - **Python 3.14+** with python-telegram-bot v20+
-- **GPT 5.2** for question generation and PDF preprocessing (400K context, 128K output)
-- **Claude Sonnet 4-5** for user responses (unchanged)
-- **Claude Haiku** for deduplication checks (unchanged - cheapest option)
+- **GPT 5.2** for question generation with file search (400K context, 128K output)
+- **OpenAI File Search API** for retrieving BCBA content from vector store
+- **OpenAI Embeddings** (text-embedding-3-large) for deduplication
 - **SQLite + aiosqlite** for async database
 - **APScheduler** for scheduled delivery
 - **aiohttp + Jinja2 + HTMX** for web admin interface
@@ -35,6 +35,13 @@ source .venv/bin/activate
 
 # Run web admin only (port 8070)
 .venv/bin/python -m src.main --web-only
+
+# Vector store management
+.venv/bin/python -m src.scripts.manage_vector_store create   # Initial setup
+.venv/bin/python -m src.scripts.manage_vector_store sync     # Sync after content changes
+.venv/bin/python -m src.scripts.manage_vector_store status   # Check status
+.venv/bin/python -m src.scripts.manage_vector_store list     # List files
+.venv/bin/python -m src.scripts.manage_vector_store delete   # Delete store
 
 # Database inspection
 .venv/bin/python -m src.main --db-stats           # Pool statistics
@@ -61,7 +68,7 @@ source .venv/bin/activate
 ### Core Flow
 1. **Scheduler** → triggers at 8 AM/PM per user timezone
 2. **Pool Manager** → checks threshold, triggers batch generation if needed
-3. **Question Generator** → loads `data/processed/*.md`, calls GPT 5.2 API
+3. **Question Generator** → uses file_search to retrieve content from vector store, calls GPT 5.2 API
 4. **Bot Handler** → sends question with inline keyboard
 5. **Callback Handler** → processes answer, updates stats, awards achievements
 
@@ -72,11 +79,13 @@ source .venv/bin/activate
 | `src/bot/handlers.py` | User commands (/start, /quiz, /stats) |
 | `src/bot/admin_handlers.py` | Admin commands (/ban, /broadcast, /usage) |
 | `src/bot/middleware.py` | DM-only, ban check, rate limiting decorators |
-| `src/services/question_generator.py` | GPT 5.2 API integration for question generation |
+| `src/services/question_generator.py` | GPT 5.2 + file_search for question generation |
+| `src/services/vector_store_manager.py` | OpenAI vector store management |
+| `src/services/dedup_service.py` | Embedding-based deduplication |
 | `src/services/pool_manager.py` | Threshold checks, BCBA weights, dedup |
 | `src/services/scheduler.py` | APScheduler job setup |
-| `src/services/content_validator.py` | Validates MD files at startup |
-| `src/services/usage_tracker.py` | API cost tracking with cache pricing |
+| `src/services/content_validator.py` | Validates vector store at startup |
+| `src/services/usage_tracker.py` | API cost tracking |
 | `src/database/repository.py` | All async DB operations |
 | `src/database/migrations.py` | Schema versioning |
 | `src/config/constants.py` | ContentArea enums, achievements, aliases |
@@ -104,15 +113,16 @@ Tech: aiohttp server + Jinja2 templates + HTMX for reactivity + Tailwind CSS
 
 | File | Contents |
 |------|----------|
-| `.env` | Secrets: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, OPENAI_API_KEY |
+| `.env` | Secrets: TELEGRAM_BOT_TOKEN, OPENAI_API_KEY |
 | `config/config.json` | All settings (supports `${ENV_VAR}` substitution) |
 
 Key config sections:
 - `question_generation.openai_model` - GPT model for question generation (default: gpt-5.2)
 - `preprocessing.model` - GPT model for PDF extraction (default: gpt-5.2)
 - `pool_management.threshold` - Min unseen questions per active user (default: 20)
-- `pool_management.BCBA_WEIGHTS` - Distribution across 9 content areas
-- `pricing` - Token costs for Sonnet/Haiku/GPT-5.2 including cache pricing
+- `pool_management.dedup_threshold` - Embedding similarity threshold (default: 0.85)
+- `pool_management.bcba_weights` - Distribution across 9 content areas
+- `pricing` - Token costs for GPT-5.2 and embeddings
 
 ## Database
 
@@ -143,7 +153,7 @@ Schema migrations managed in `src/database/migrations.py`
 - Generate when avg unseen questions per active user < 20
 - Active user = answered in last 7 days
 - Batch size: 50 questions
-- Dedup: Haiku checks against 50 most recent in same content area
+- Dedup: Embedding similarity check (threshold: 0.85)
 
 ### Seeding
 ```bash
@@ -157,6 +167,26 @@ Schema migrations managed in `src/database/migrations.py`
 .venv/bin/python -m src.scripts.seed_questions --resume
 ```
 
+## Vector Store Setup
+
+Before running the bot, set up the vector store:
+
+```bash
+# 1. Preprocess PDFs to markdown (if not done)
+.venv/bin/python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
+
+# 2. Create vector store and upload content
+.venv/bin/python -m src.scripts.manage_vector_store create
+
+# 3. Verify setup
+.venv/bin/python -m src.scripts.manage_vector_store status
+```
+
+After updating content files, run sync:
+```bash
+.venv/bin/python -m src.scripts.manage_vector_store sync
+```
+
 ## PDF Preprocessing
 
 Uses **GPT 5.2's native PDF support** - sends PDFs directly to API (not pdfplumber extraction).
@@ -165,13 +195,13 @@ Leverages GPT 5.2's 400K context window for complete document processing.
 Pipeline:
 1. Load PDF from `data/raw/`
 2. Send to GPT 5.2 API for structured markdown extraction
-3. Output to `data/processed/{area}/` organized by BCBA content area
-
-Output directories: `core/`, `ethics/`, `supervision/`, `reference/`
+3. Output to `data/processed/` as markdown files
 
 ## Key Design Decisions
 
 - **Pre-generated pool** - Batch refreshed, not on-demand
+- **Vector store** - Content stored in OpenAI for file_search retrieval
+- **Embedding dedup** - Fast, cheap cosine similarity vs LLM-based
 - **Hybrid question selection** - Mostly random, 1-in-5 targets weak areas
 - **Day-based streaks** - One question/day maintains streak
 - **No question expiration** - Users can answer anytime
@@ -190,5 +220,6 @@ Output directories: `core/`, `ethics/`, `supervision/`, `reference/`
 
 - `data/abaquiz.db` - Production database (never delete)
 - `data/.seed_progress.json` - Seeding state for resume (auto-managed)
+- `data/.vector_store_state.json` - Vector store state (auto-managed)
 - `config/config.json` - All runtime configuration
-- `data/processed/` - Required markdown content (validated at startup)
+- `data/processed/` - Markdown content for vector store

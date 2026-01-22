@@ -53,4 +53,11 @@ Thumbs.db
 .claude/
 
 ssh_pod.sh
+ssh_prod.sh
 data/debug_response.md
+
+# Node
+node_modules/
+
+# Vector store state
+data/.vector_store_state.json

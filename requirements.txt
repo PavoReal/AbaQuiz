@@ -1,10 +1,7 @@
 # Telegram Bot
 python-telegram-bot>=20.0
 
-# Anthropic Claude API
-anthropic>=0.18.0
-
-# OpenAI API (GPT 5.2 for preprocessing and question generation)
+# OpenAI API (GPT 5.2 for question generation and embeddings)
 openai>=1.0.0
 
 # Scheduling

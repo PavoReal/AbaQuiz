@@ -12,7 +12,7 @@ import pytest_asyncio
 
 # Set test environment variables before importing settings
 os.environ["TELEGRAM_BOT_TOKEN"] = "test_token_12345"
-os.environ["ANTHROPIC_API_KEY"] = "test_api_key_12345"
+os.environ["OPENAI_API_KEY"] = "test_openai_api_key_12345"
 
 
 @pytest.fixture(scope="session")

@@ -29,7 +29,6 @@ class Settings:
 
         # Required environment variables
         self.telegram_bot_token = self._require_env("TELEGRAM_BOT_TOKEN")
-        self.anthropic_api_key = self._require_env("ANTHROPIC_API_KEY")
         self.openai_api_key = self._require_env("OPENAI_API_KEY")
 
         # Optional environment variables with defaults
@@ -104,24 +103,17 @@ class Settings:
         self.pool_threshold = pool_config.get("threshold", 20)
         self.pool_batch_size = pool_config.get("batch_size", 50)
         self.pool_active_days = pool_config.get("active_days", 7)
-        self.pool_dedup_model = pool_config.get(
-            "dedup_model", "claude-haiku-4-5"
-        )
         self.pool_dedup_check_limit = pool_config.get("dedup_check_limit", 30)
-        self.pool_dedup_confidence_threshold = pool_config.get(
-            "dedup_confidence_threshold", "high"
-        )
-        self.pool_dedup_early_exit_batches = pool_config.get(
-            "dedup_early_exit_batches", 3
+        # Embedding-based dedup settings
+        self.pool_dedup_threshold = pool_config.get("dedup_threshold", 0.85)
+        self.pool_dedup_embedding_model = pool_config.get(
+            "dedup_embedding_model", "text-embedding-3-large"
         )
         self.pool_generation_batch_size = pool_config.get(
             "generation_batch_size", 5
         )
         self.pool_max_concurrent_generation = pool_config.get(
             "max_concurrent_generation", 20
-        )
-        self.pool_max_concurrent_dedup = pool_config.get(
-            "max_concurrent_dedup", 30
         )
         self.pool_bcba_weights: dict[str, float] = pool_config.get(
             "bcba_weights", {}
@@ -182,12 +174,7 @@ class Settings:
         return telegram_id in self.admin_users
 
     def get_model_pricing(self, model: str) -> dict[str, float] | None:
-        """Get pricing info for a model (Anthropic or OpenAI)."""
-        # Check Anthropic models first
-        anthropic_pricing = self.pricing.get("anthropic", {}).get(model)
-        if anthropic_pricing:
-            return anthropic_pricing
-        # Check OpenAI models
+        """Get pricing info for a model."""
         return self.pricing.get("openai", {}).get(model)
 
 
