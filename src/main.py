@@ -150,7 +150,7 @@ async def run_web_only() -> None:
     from src.web.server import create_app
 
     settings = get_settings()
-    setup_logging(settings.log_level)
+    setup_logging(settings.log_level, debug_scheduler=settings.debug_scheduler)
 
     logger.info("Starting AbaQuiz web server (web-only mode)...")
 
@@ -209,6 +209,7 @@ def register_handlers(application) -> None:
         ban_command,
         broadcast_command,
         notify_command,
+        scheduler_command,
         unban_command,
         usage_command,
         users_command,
@@ -258,6 +259,7 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(CommandHandler("usage", usage_command))
     application.add_handler(CommandHandler("notify", notify_command))
+    application.add_handler(CommandHandler("scheduler", scheduler_command))
 
     # Callback query handlers
     application.add_handler(
@@ -306,8 +308,8 @@ async def run_bot() -> None:
     # Load settings (validates required env vars)
     settings = get_settings()
 
-    # Set up logging
-    setup_logging(settings.log_level)
+    # Set up logging (debug_scheduler enables verbose APScheduler logs)
+    setup_logging(settings.log_level, debug_scheduler=settings.debug_scheduler)
 
     logger.info("Starting AbaQuiz bot...")
 

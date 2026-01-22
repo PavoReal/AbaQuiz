@@ -18,10 +18,12 @@
     "pool_threshold_per_area": 20,
     "batch_size": 10,
     "type_distribution": {
-      "multiple_choice": 0.8,
-      "true_false": 0.2
+      "multiple_choice": 1.0,
+      "true_false": 0.0
     },
     "openai_model": "gpt-5.2",
+    "reasoning_effort": "medium",
+    "reasoning_summary": "auto",
     "max_tokens": 8192
   },
   "pool_management": {

@@ -387,6 +387,7 @@ def format_admin_help() -> str:
 /broadcast <message> - Message all users
 /usage - API usage stats
 /notify - Notification settings
+/scheduler - Scheduler status & diagnostics
 
 _<user> can be @username or user ID_"""
 

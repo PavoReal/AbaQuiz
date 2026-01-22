@@ -108,4 +108,4 @@ cat data/processed/00_index.md
 
 ## Environment
 
-Requires `ANTHROPIC_API_KEY` in `.env` or environment variables.
+Requires `OPENAI_API_KEY` in `.env` or environment variables.

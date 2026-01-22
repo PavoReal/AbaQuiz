@@ -170,6 +170,8 @@ class PoolManager:
                     explanation=q["explanation"],
                     content_area=q["content_area"],
                     model=q.get("model"),
+                    source_citation=q.get("source_citation"),
+                    difficulty=q.get("difficulty"),
                 )
 
             if questions:

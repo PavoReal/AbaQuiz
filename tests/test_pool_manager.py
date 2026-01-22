@@ -2,7 +2,6 @@
 Tests for question pool management service.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from src.config.constants import ContentArea
 from src.services.pool_manager import (
     BCBA_WEIGHTS,
-    DEDUP_PROMPT,
     PoolManager,
     get_pool_manager,
 )
@@ -20,17 +18,15 @@ from src.services.pool_manager import (
 def mock_settings():
     """Create mock settings for testing."""
     settings = MagicMock()
-    settings.anthropic_api_key = "test-api-key"
+    settings.openai_api_key = "test-api-key"
     settings.database_path = ":memory:"
     settings.pool_threshold = 20
     settings.pool_batch_size = 50
-    settings.pool_dedup_model = "claude-haiku-4-5"
+    settings.pool_dedup_threshold = 0.85
+    settings.pool_dedup_embedding_model = "text-embedding-3-large"
     settings.pool_dedup_check_limit = 30
-    settings.pool_dedup_confidence_threshold = "high"
-    settings.pool_dedup_early_exit_batches = 3
     settings.pool_generation_batch_size = 5
     settings.pool_max_concurrent_generation = 20
-    settings.pool_max_concurrent_dedup = 30
     settings.pool_bcba_weights = {}
     return settings
 
@@ -51,7 +47,7 @@ def mock_question():
         "explanation": "An FBA identifies the function of behavior.",
         "content_area": "Behavior Assessment",
         "category": "definition",
-        "model": "claude-sonnet-4-5",
+        "model": "gpt-5.2",
     }
 
 
@@ -74,13 +70,26 @@ def mock_existing_question():
     }
 
 
+@pytest.fixture
+def mock_dedup_service():
+    """Create a mock dedup service."""
+    service = MagicMock()
+    # Default to not a duplicate
+    mock_result = MagicMock()
+    mock_result.is_duplicate = False
+    mock_result.similarity = 0.2
+    mock_result.matched_question = None
+    service.check_duplicate = AsyncMock(return_value=mock_result)
+    return service
+
+
 class TestPoolManager:
     """Tests for PoolManager class."""
 
     def test_calculate_batch_distribution(self, mock_settings):
         """Test that batch distribution follows BCBA weights."""
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
+            with patch("src.services.pool_manager.get_dedup_service"):
                 manager = PoolManager()
                 distribution = manager.calculate_batch_distribution()
 
@@ -105,7 +114,7 @@ class TestPoolManager:
         }
 
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
+            with patch("src.services.pool_manager.get_dedup_service"):
                 manager = PoolManager()
                 # Override bcba_weights directly for test
                 manager.bcba_weights = {
@@ -130,43 +139,14 @@ class TestPoolManager:
             assert area in BCBA_WEIGHTS, f"Missing weight for {area}"
 
 
-class TestDedupPrompt:
-    """Tests for the deduplication prompt."""
-
-    def test_dedup_prompt_has_required_sections(self):
-        """Test that dedup prompt contains all required sections."""
-        assert "<similarity_criteria>" in DEDUP_PROMPT
-        assert "</similarity_criteria>" in DEDUP_PROMPT
-        assert "<examples>" in DEDUP_PROMPT
-        assert "</examples>" in DEDUP_PROMPT
-        assert "<confidence_levels>" in DEDUP_PROMPT
-        assert "</confidence_levels>" in DEDUP_PROMPT
-        assert "<output_format>" in DEDUP_PROMPT
-        assert "</output_format>" in DEDUP_PROMPT
-
-    def test_dedup_prompt_has_placeholders(self):
-        """Test that dedup prompt has required placeholders."""
-        assert "{new_question}" in DEDUP_PROMPT
-        assert "{existing_questions}" in DEDUP_PROMPT
-
-    def test_dedup_prompt_format(self):
-        """Test that dedup prompt can be formatted."""
-        formatted = DEDUP_PROMPT.format(
-            new_question="Test question?",
-            existing_questions="Existing question 1\nExisting question 2",
-        )
-        assert "Test question?" in formatted
-        assert "Existing question 1" in formatted
-
-
 class TestCheckDuplicate:
     """Tests for duplicate checking logic."""
 
     @pytest.mark.asyncio
-    async def test_check_duplicate_empty_list_returns_false(self, mock_settings):
+    async def test_check_duplicate_empty_list_returns_false(self, mock_settings, mock_dedup_service):
         """Test that empty existing questions returns not duplicate."""
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup_service):
                 manager = PoolManager()
 
                 result = await manager.check_duplicate(
@@ -177,24 +157,20 @@ class TestCheckDuplicate:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_check_duplicate_high_confidence_returns_true(
+    async def test_check_duplicate_high_similarity_returns_true(
         self, mock_settings, mock_question, mock_existing_question
     ):
-        """Test that high confidence duplicate is rejected."""
-        mock_response = MagicMock()
-        mock_content = MagicMock()
-        mock_content.text = json.dumps({
-            "is_duplicate": True,
-            "reason": "Tests same concept",
-            "confidence": "high"
-        })
-        mock_response.content = [mock_content]
+        """Test that high similarity duplicate is rejected."""
+        mock_result = MagicMock()
+        mock_result.is_duplicate = True
+        mock_result.similarity = 0.92
+        mock_result.matched_question = "What is the main purpose of conducting an FBA?"
 
-        mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_dedup = MagicMock()
+        mock_dedup.check_duplicate = AsyncMock(return_value=mock_result)
 
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic", return_value=mock_client):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup):
                 manager = PoolManager()
 
                 result = await manager.check_duplicate(
@@ -205,52 +181,20 @@ class TestCheckDuplicate:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_check_duplicate_low_confidence_returns_false(
+    async def test_check_duplicate_low_similarity_returns_false(
         self, mock_settings, mock_question, mock_existing_question
     ):
-        """Test that low confidence duplicate is accepted."""
-        mock_response = MagicMock()
-        mock_content = MagicMock()
-        mock_content.text = json.dumps({
-            "is_duplicate": True,
-            "reason": "Related topic but different focus",
-            "confidence": "low"
-        })
-        mock_response.content = [mock_content]
+        """Test that low similarity questions are accepted."""
+        mock_result = MagicMock()
+        mock_result.is_duplicate = False
+        mock_result.similarity = 0.45
+        mock_result.matched_question = None
 
-        mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_dedup = MagicMock()
+        mock_dedup.check_duplicate = AsyncMock(return_value=mock_result)
 
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic", return_value=mock_client):
-                manager = PoolManager()
-
-                result = await manager.check_duplicate(
-                    mock_question,
-                    [mock_existing_question]
-                )
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_check_duplicate_not_duplicate_returns_false(
-        self, mock_settings, mock_question, mock_existing_question
-    ):
-        """Test that non-duplicate is accepted."""
-        mock_response = MagicMock()
-        mock_content = MagicMock()
-        mock_content.text = json.dumps({
-            "is_duplicate": False,
-            "reason": "Different concepts",
-            "confidence": "high"
-        })
-        mock_response.content = [mock_content]
-
-        mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-
-        with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic", return_value=mock_client):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup):
                 manager = PoolManager()
 
                 result = await manager.check_duplicate(
@@ -265,11 +209,17 @@ class TestCheckDuplicate:
         self, mock_settings, mock_question, mock_existing_question
     ):
         """Test that API errors allow the question (fail-open)."""
-        mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(side_effect=Exception("API Error"))
+        mock_result = MagicMock()
+        mock_result.is_duplicate = False
+        mock_result.similarity = 0.0
+        mock_result.matched_question = None
+
+        mock_dedup = MagicMock()
+        # On error, dedup_service returns not-duplicate (fail-open behavior)
+        mock_dedup.check_duplicate = AsyncMock(return_value=mock_result)
 
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic", return_value=mock_client):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup):
                 manager = PoolManager()
 
                 result = await manager.check_duplicate(
@@ -279,47 +229,6 @@ class TestCheckDuplicate:
 
         # Should allow question on error (fail-open)
         assert result is False
-
-
-class TestParseDedupResult:
-    """Tests for dedup result parsing."""
-
-    def test_parse_valid_json(self, mock_settings):
-        """Test parsing valid JSON."""
-        with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
-                manager = PoolManager()
-
-                result = manager._parse_dedup_result(
-                    '{"is_duplicate": true, "reason": "test", "confidence": "high"}'
-                )
-
-        assert result["is_duplicate"] is True
-        assert result["reason"] == "test"
-        assert result["confidence"] == "high"
-
-    def test_parse_json_with_text(self, mock_settings):
-        """Test parsing JSON embedded in text."""
-        with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
-                manager = PoolManager()
-
-                result = manager._parse_dedup_result(
-                    'Here is my analysis: {"is_duplicate": false, "reason": "different", "confidence": "low"}'
-                )
-
-        assert result is not None
-        assert result["is_duplicate"] is False
-
-    def test_parse_invalid_returns_none(self, mock_settings):
-        """Test parsing invalid content returns None."""
-        with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
-                manager = PoolManager()
-
-                result = manager._parse_dedup_result("not valid json at all")
-
-        assert result is None
 
 
 class TestGenerateWithDedup:
@@ -334,21 +243,17 @@ class TestGenerateWithDedup:
         mock_repo = MagicMock()
         mock_repo.get_questions_by_content_area = AsyncMock(return_value=[])
 
-        # Mock dedup to always return False (not duplicate)
-        mock_response = MagicMock()
-        mock_content = MagicMock()
-        mock_content.text = json.dumps({
-            "is_duplicate": False,
-            "reason": "unique",
-            "confidence": "high"
-        })
-        mock_response.content = [mock_content]
+        # Mock dedup service to always return not duplicate
+        mock_result = MagicMock()
+        mock_result.is_duplicate = False
+        mock_result.similarity = 0.2
+        mock_result.matched_question = None
 
-        mock_client = MagicMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_dedup = MagicMock()
+        mock_dedup.check_duplicate = AsyncMock(return_value=mock_result)
 
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic", return_value=mock_client):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup):
                 with patch("src.services.pool_manager.get_question_generator", return_value=mock_generator):
                     with patch("src.services.pool_manager.get_repository", return_value=mock_repo):
                         manager = PoolManager()
@@ -361,6 +266,75 @@ class TestGenerateWithDedup:
         assert len(result) == 1
         assert result[0] == mock_question
 
+    @pytest.mark.asyncio
+    async def test_generate_with_dedup_rejects_duplicates(self, mock_settings, mock_question):
+        """Test that duplicate questions are rejected."""
+        # Create two questions, one duplicate
+        question1 = mock_question.copy()
+        question2 = mock_question.copy()
+        question2["question"] = "Similar question about FBA?"
+
+        mock_generator = MagicMock()
+        mock_generator.generate_question_batch = AsyncMock(return_value=[question1, question2])
+
+        mock_repo = MagicMock()
+        mock_repo.get_questions_by_content_area = AsyncMock(return_value=[])
+
+        # First question is unique, second is duplicate
+        result1 = MagicMock()
+        result1.is_duplicate = False
+        result1.similarity = 0.2
+        result1.matched_question = None
+
+        result2 = MagicMock()
+        result2.is_duplicate = True
+        result2.similarity = 0.92
+        result2.matched_question = question1["question"]
+
+        mock_dedup = MagicMock()
+        mock_dedup.check_duplicate = AsyncMock(side_effect=[result1, result2])
+
+        with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup):
+                with patch("src.services.pool_manager.get_question_generator", return_value=mock_generator):
+                    with patch("src.services.pool_manager.get_repository", return_value=mock_repo):
+                        manager = PoolManager()
+
+                        result = await manager.generate_with_dedup(
+                            ContentArea.BEHAVIOR_ASSESSMENT,
+                            count=2
+                        )
+
+        # Only the first question should be accepted
+        assert len(result) == 1
+        assert result[0] == question1
+
+
+class TestGenerateWithoutDedup:
+    """Tests for generation without deduplication."""
+
+    @pytest.mark.asyncio
+    async def test_generate_without_dedup_returns_all(self, mock_settings, mock_question):
+        """Test that all questions are returned without dedup."""
+        questions = [mock_question.copy() for _ in range(3)]
+
+        mock_generator = MagicMock()
+        mock_generator.generate_question_batch = AsyncMock(return_value=questions)
+
+        mock_dedup = MagicMock()
+
+        with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
+            with patch("src.services.pool_manager.get_dedup_service", return_value=mock_dedup):
+                with patch("src.services.pool_manager.get_question_generator", return_value=mock_generator):
+                    manager = PoolManager()
+
+                    result = await manager.generate_without_dedup(
+                        ContentArea.BEHAVIOR_ASSESSMENT,
+                        count=3
+                    )
+
+        assert len(result) == 3
+
 
 class TestSingleton:
     """Tests for singleton behavior."""
@@ -372,7 +346,7 @@ class TestSingleton:
         pm._pool_manager = None
 
         with patch("src.services.pool_manager.get_settings", return_value=mock_settings):
-            with patch("src.services.pool_manager.AsyncAnthropic"):
+            with patch("src.services.pool_manager.get_dedup_service"):
                 manager1 = get_pool_manager()
                 manager2 = get_pool_manager()
 

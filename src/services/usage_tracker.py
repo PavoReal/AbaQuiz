@@ -1,7 +1,7 @@
 """
 API usage tracking service for AbaQuiz.
 
-Tracks API usage (Claude and OpenAI) for cost monitoring and analytics.
+Tracks OpenAI API usage for cost monitoring and analytics.
 """
 
 from typing import Any, Optional
@@ -40,7 +40,7 @@ class UsageTracker:
         Returns:
             Estimated cost in USD
         """
-        model = model or self.settings.claude_model
+        model = model or self.settings.openai_model
         pricing = self.settings.get_model_pricing(model)
 
         if not pricing:
@@ -82,7 +82,7 @@ class UsageTracker:
         Returns:
             Record ID
         """
-        model = model or self.settings.claude_model
+        model = model or self.settings.openai_model
         estimated_cost = self.calculate_cost(
             input_tokens=input_tokens,
             output_tokens=output_tokens,

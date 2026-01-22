@@ -139,8 +139,8 @@ def _get_generation_config(settings: Any) -> dict[str, Any]:
     return {
         "threshold": pool_manager.threshold,
         "batch_size": pool_manager.batch_size,
-        "dedup_model": pool_manager.dedup_model,
-        "dedup_confidence_threshold": pool_manager.dedup_confidence_threshold,
+        "dedup_threshold": pool_manager.dedup_threshold,
+        "dedup_check_limit": pool_manager.dedup_check_limit,
         "generation_batch_size": pool_manager.generation_batch_size,
         "max_concurrent_generation": pool_manager.max_concurrent_generation,
     }
@@ -263,11 +263,11 @@ async def _run_generation(
     pool_manager = get_pool_manager()
     progress = _generation_state["progress"]
 
-    # Cost estimates per question (Claude 4.5 pricing: Jan 2026)
-    # Sonnet 4.5: $3/MTok input + $15/MTok output (~12K in + 500 out = ~$0.04)
-    # Haiku 4.5: $1/MTok input + $5/MTok output (~800 in + 50 out = ~$0.001)
-    COST_PER_QUESTION = 0.04
-    COST_PER_DEDUP = 0.001
+    # Cost estimates per question (GPT 5.2 pricing: Jan 2026)
+    # GPT 5.2: $1.75/MTok input + $14/MTok output (~2K in + 2K out per batch of 5 = ~$0.007/q)
+    # Embeddings: $0.13/MTok (~500 tokens = ~$0.00007)
+    COST_PER_QUESTION = 0.007
+    COST_PER_DEDUP = 0.0001
 
     def is_cancelled() -> bool:
         """Check if cancellation was requested."""
@@ -474,9 +474,9 @@ async def api_calculate_distribution(request: web.Request) -> web.Response:
     distribution = _calculate_distribution(count, pool_manager.bcba_weights)
 
     # Calculate cost estimate
-    # Claude 4.5 pricing (Jan 2026)
-    COST_PER_QUESTION = 0.04  # Sonnet 4.5
-    COST_PER_DEDUP = 0.001 * 5  # Haiku 4.5 × 5 checks per question
+    # GPT 5.2 pricing (Jan 2026)
+    COST_PER_QUESTION = 0.007  # GPT 5.2
+    COST_PER_DEDUP = 0.0001  # Embeddings
 
     cost_with_dedup = count * (COST_PER_QUESTION + COST_PER_DEDUP)
     cost_without_dedup = count * COST_PER_QUESTION

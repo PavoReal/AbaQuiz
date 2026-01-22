@@ -27,6 +27,7 @@ sys.path.insert(0, str(project_root))
 from src.config.constants import ContentArea
 from src.config.logging import get_logger, setup_logging
 from src.config.settings import get_settings
+from src.database.migrations import initialize_database, run_migrations
 from src.database.repository import get_repository
 from src.services.pool_manager import BCBA_WEIGHTS, PoolManager
 
@@ -81,48 +82,43 @@ def estimate_cost(question_count: int, skip_dedup: bool = False) -> dict[str, fl
     Estimate API cost for generating questions with batch generation.
 
     With batch generation (5 questions per call):
-    - Sonnet for generation: ~2000 input, ~2000 output per batch (5 questions)
-    - Haiku for dedup: ~3 calls per question (with early exit optimization)
+    - GPT 5.2 for generation: ~2000 input, ~2000 output per batch (5 questions)
+    - Embeddings for dedup: ~1 call per question
     """
     settings = get_settings()
 
-    # Sonnet pricing
-    sonnet_pricing = settings.get_model_pricing("claude-sonnet-4-5") or {
-        "input_per_million": 3.00,
-        "output_per_million": 15.00,
+    # GPT 5.2 pricing for question generation
+    gpt_pricing = settings.get_model_pricing("gpt-5.2") or {
+        "input_per_million": 1.75,
+        "output_per_million": 14.00,
     }
 
-    # Haiku pricing
-    haiku_pricing = settings.get_model_pricing("claude-haiku-4-5") or {
-        "input_per_million": 1.00,
-        "output_per_million": 5.00,
+    # Embedding pricing for deduplication
+    embedding_pricing = settings.get_model_pricing("text-embedding-3-large") or {
+        "input_per_million": 0.13,
     }
 
-    # Generation cost (Sonnet) - batch generation: 5 questions per call
+    # Generation cost (GPT 5.2) - batch generation: 5 questions per call
     batch_size = 5
     generation_calls = (question_count + batch_size - 1) // batch_size
     gen_input_tokens = generation_calls * 2000  # ~2000 input per batch
     gen_output_tokens = generation_calls * 2000  # ~2000 output per batch (5 questions)
     gen_cost = (
-        gen_input_tokens / 1_000_000 * sonnet_pricing["input_per_million"]
-        + gen_output_tokens / 1_000_000 * sonnet_pricing["output_per_million"]
+        gen_input_tokens / 1_000_000 * gpt_pricing["input_per_million"]
+        + gen_output_tokens / 1_000_000 * gpt_pricing["output_per_million"]
     )
 
-    # Dedup cost (Haiku)
+    # Dedup cost (Embeddings) - embedding-based deduplication
     if skip_dedup:
         dedup_cost = 0.0
         dedup_calls = 0
         dedup_input_tokens = 0
-        dedup_output_tokens = 0
     else:
-        # ~3 Haiku calls per question (with early exit optimization)
-        dedup_calls = question_count * 3
-        dedup_input_tokens = dedup_calls * 1000
-        dedup_output_tokens = dedup_calls * 100
-        dedup_cost = (
-            dedup_input_tokens / 1_000_000 * haiku_pricing["input_per_million"]
-            + dedup_output_tokens / 1_000_000 * haiku_pricing["output_per_million"]
-        )
+        # Embedding calls per question: 1 for new question + comparisons with existing
+        # Average ~500 tokens per question for embedding
+        dedup_calls = question_count
+        dedup_input_tokens = dedup_calls * 500
+        dedup_cost = dedup_input_tokens / 1_000_000 * embedding_pricing["input_per_million"]
 
     return {
         "generation_calls": generation_calls,
@@ -133,7 +129,6 @@ def estimate_cost(question_count: int, skip_dedup: bool = False) -> dict[str, fl
         "gen_input_tokens": gen_input_tokens,
         "gen_output_tokens": gen_output_tokens,
         "dedup_input_tokens": dedup_input_tokens,
-        "dedup_output_tokens": dedup_output_tokens,
     }
 
 
@@ -158,6 +153,11 @@ async def seed_questions(
         Dict with results
     """
     settings = get_settings()
+
+    # Initialize database (create tables if needed)
+    await initialize_database(settings.database_path)
+    await run_migrations(settings.database_path)
+
     repo = await get_repository(settings.database_path)
     pool_manager = PoolManager()
 
@@ -225,13 +225,13 @@ async def _seed_questions_impl(
             print(f"  {area.value}: {count} ({weight*100:.0f}% weight)")
 
     print(f"\nEstimated cost:")
-    print(f"  Generation (Sonnet): ${cost_estimate['generation_cost']:.2f}")
+    print(f"  Generation (GPT 5.2): ${cost_estimate['generation_cost']:.2f}")
     print(f"    ({cost_estimate['generation_calls']} API calls)")
     if skip_dedup:
         print(f"  Deduplication: $0.00 (skipped)")
     else:
-        print(f"  Deduplication (Haiku): ${cost_estimate['dedup_cost']:.2f}")
-        print(f"    (~{cost_estimate['dedup_calls']} API calls)")
+        print(f"  Deduplication (Embeddings): ${cost_estimate['dedup_cost']:.2f}")
+        print(f"    ({cost_estimate['dedup_calls']} embedding calls)")
     print(f"  Total: ${cost_estimate['total_cost']:.2f}")
     print("=" * 60)
 

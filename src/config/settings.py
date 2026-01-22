@@ -43,6 +43,12 @@ class Settings:
         self.morning_quiz_hour = bot_config.get("morning_quiz_hour", 8)
         self.evening_quiz_hour = bot_config.get("evening_quiz_hour", 20)
 
+        # Debug settings
+        debug_config = self._config.get("debug", {})
+        self.debug_scheduler = self._get_env_bool(
+            "DEBUG_SCHEDULER", debug_config.get("scheduler", False)
+        )
+
         # Admin settings
         admin_config = self._config.get("admin", {})
         self.admin_users: list[int] = admin_config.get("admin_users", [])
@@ -71,10 +77,10 @@ class Settings:
             "type_distribution",
             {"multiple_choice": 0.8, "true_false": 0.2},
         )
-        # Legacy Claude model setting (for user responses)
-        self.claude_model = gen_config.get("model", "claude-sonnet-4-5")
         # OpenAI model for question generation (GPT 5.2)
         self.openai_model = gen_config.get("openai_model", "gpt-5.2")
+        self.reasoning_effort = gen_config.get("reasoning_effort", "low")
+        self.reasoning_summary = gen_config.get("reasoning_summary", "auto")
         self.generation_max_tokens = gen_config.get("max_tokens", 8192)
 
         # Preprocessing settings

@@ -87,7 +87,7 @@ async def migrate_to_v1(db: aiosqlite.Connection) -> None:
     """
     Migration to schema version 1.
 
-    Adds 'model' column to questions table to track which Claude model
+    Adds 'model' column to questions table to track which AI model
     generated each question.
     """
     logger.info("Running migration v1: Adding model column to questions table")

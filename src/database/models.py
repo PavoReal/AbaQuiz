@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS questions (
     correct_answer TEXT NOT NULL,
     explanation TEXT NOT NULL,
     content_area TEXT NOT NULL,
-    model TEXT,  -- Claude model ID used to generate this question
+    model TEXT,  -- AI model ID used to generate this question
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """

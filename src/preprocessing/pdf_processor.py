@@ -309,7 +309,7 @@ class PDFProcessor:
         verbose: bool = False,
     ) -> ProcessedDocument:
         """
-        Process a PDF file using Claude's native PDF support.
+        Process a PDF file using GPT 5.2's native PDF support.
 
         Args:
             pdf_path: Path to the PDF file

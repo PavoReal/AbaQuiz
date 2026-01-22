@@ -23,14 +23,14 @@ source .venv/bin/activate
 ```
 
 Required environment variables (in `.env`):
-- `ANTHROPIC_API_KEY` - Your Anthropic API key
+- `OPENAI_API_KEY` - Your OpenAI API key
 - `TELEGRAM_BOT_TOKEN` - Telegram bot token (for bot/DB commands)
 
 ---
 
 ## PDF Preprocessing
 
-The preprocessing pipeline extracts content from BCBA study PDFs and converts them to structured markdown using Claude's native PDF support.
+The preprocessing pipeline extracts content from BCBA study PDFs and converts them to structured markdown using GPT 5.2's native PDF support.
 
 ### Basic Usage
 
@@ -55,7 +55,7 @@ python -m src.preprocessing.run_preprocessing --dry-run
 | `--input DIR` | `-i` | Input directory with PDFs (default: `data/raw/`) |
 | `--output DIR` | `-o` | Output directory for markdown (default: `data/processed/`) |
 | `--file FILE` | `-f` | Process a single PDF file |
-| `--dry-run` | | Show plan without calling Claude API |
+| `--dry-run` | | Show plan without calling OpenAI API |
 | `--verbose` | `-v` | Show detailed progress |
 | `--force` | | Reprocess all PDFs (ignore manifest) |
 | `--yes` | `-y` | Skip prompts, process all without asking |
@@ -64,7 +64,7 @@ python -m src.preprocessing.run_preprocessing --dry-run
 
 1. **Discovery**: Finds all PDFs in input directory
 2. **Mapping**: Checks each PDF against `BCBA_DOCUMENTS` in `pdf_processor.py`
-3. **Processing**: Sends PDF to Claude for extraction and structuring
+3. **Processing**: Sends PDF to GPT 5.2 for extraction and structuring
 4. **Deduplication**: Content is hashed to prevent duplicates on re-runs
 5. **Output**: Markdown saved to appropriate subdirectory
 
@@ -189,7 +189,7 @@ Estimated cost:
 
 ### Deduplication
 
-By default, new questions are checked against existing questions in the same content area using Claude Haiku. This prevents generating near-duplicate questions.
+By default, new questions are checked against existing questions in the same content area using OpenAI embeddings. This prevents generating near-duplicate questions.
 
 - Use `--skip-dedup` for initial seeding on an empty pool
 - Dedup checks the 50 most recent questions per area

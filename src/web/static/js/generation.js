@@ -31,8 +31,8 @@ function generationControls() {
         config: {
             threshold: 20,
             batch_size: 50,
-            dedup_model: 'claude-haiku-4-5',
-            dedup_confidence_threshold: 'high',
+            dedup_threshold: 0.85,
+            dedup_check_limit: 30,
             generation_batch_size: 5,
             max_concurrent_generation: 20
         },

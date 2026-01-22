@@ -78,12 +78,12 @@ class GeneratedQuestion(BaseModel):
     """A single generated quiz question."""
 
     question: str = Field(description="The question text")
-    type: Literal["multiple_choice", "true_false"] = Field(description="Question type")
+    type: Literal["multiple_choice"] = Field(description="Question type (always multiple_choice)")
     options: QuestionOptions = Field(
-        description="Answer options. For multiple_choice use A/B/C/D, for true_false use True/False"
+        description="Answer options using A/B/C/D keys"
     )
     correct_answer: str = Field(
-        description="The correct answer key only (A, B, C, D for multiple choice, or True/False for true/false)"
+        description="The correct answer key only (A, B, C, or D)"
     )
     explanation: str = Field(
         description="Why the answer is correct and why each incorrect option is wrong"
@@ -91,6 +91,9 @@ class GeneratedQuestion(BaseModel):
     category: Optional[str] = Field(
         None,
         description="Question category: scenario, definition, or application"
+    )
+    difficulty: int = Field(
+        description="Difficulty rating from 1 (basic recall) to 5 (complex multi-step reasoning)"
     )
     source_citation: Optional[SourceCitation] = Field(
         None,
@@ -121,10 +124,12 @@ CATEGORY_WEIGHTS: dict[QuestionCategory, float] = {
     QuestionCategory.APPLICATION: 0.3,
 }
 
-# System prompt for question generation - Claude 4.x optimized
+# System prompt for question generation - GPT 5.2 with reasoning
 SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating practice questions for the BCBA 5th Edition certification exam.
 
 <guidelines>
+- Generate ONLY multiple choice questions with 4 options (A, B, C, D)
+- Do NOT generate true/false questions
 - Create plausible distractors that would challenge someone who hasn't mastered the content
 - Never use "all of the above" or "none of the above" options
 - Reference specific ethics codes, task list items, or principles where relevant
@@ -132,6 +137,15 @@ SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating practice
 - Vary complexity - include questions requiring multi-step reasoning
 - Match the difficulty and style of actual BCBA certification exam questions
 </guidelines>
+
+<difficulty_rating>
+Rate each question's difficulty from 1-5:
+- 1: Basic recall of a single concept
+- 2: Understanding of a concept with straightforward application
+- 3: Application requiring integration of 2+ concepts
+- 4: Analysis of complex scenarios with multiple variables
+- 5: Evaluation/synthesis requiring multi-step reasoning and nuanced judgment
+</difficulty_rating>
 
 <explanation_format>
 Each explanation should:
@@ -170,6 +184,8 @@ Source Citation:
 BATCH_SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating practice questions for the BCBA 5th Edition certification exam.
 
 <guidelines>
+- Generate ONLY multiple choice questions with 4 options (A, B, C, D)
+- Do NOT generate true/false questions
 - Create plausible distractors that would challenge someone who hasn't mastered the content
 - Never use "all of the above" or "none of the above" options
 - Explanations should teach the concept: state why the correct answer is right AND address why each incorrect option is wrong
@@ -181,12 +197,22 @@ BATCH_SYSTEM_PROMPT = """You are an expert BCBA exam question writer creating pr
 <variety_requirements>
 For each batch, ensure:
 - Approximately 40% scenario-based clinical vignettes
-- Approximately 30% definition/concept questions
+- Approximately 30% contextualized definition/concept questions (see definition format below)
 - Approximately 30% application questions
 - Each question tests a DIFFERENT concept within the content area
 - Mix of difficulty levels (some straightforward, some requiring multi-step reasoning)
 - Include the category field for each question (scenario, definition, or application)
+- Include the difficulty field (1-5) for each question
 </variety_requirements>
+
+<difficulty_rating>
+Rate each question's difficulty from 1-5:
+- 1: Basic recall of a single concept
+- 2: Understanding of a concept with straightforward application
+- 3: Application requiring integration of 2+ concepts
+- 4: Analysis of complex scenarios with multiple variables
+- 5: Evaluation/synthesis requiring multi-step reasoning and nuanced judgment
+</difficulty_rating>
 
 <explanation_format>
 Each explanation should:
@@ -210,12 +236,17 @@ CATEGORY_INSTRUCTIONS: dict[QuestionCategory, str] = {
 - Ask what the BCBA should do, what concept is being demonstrated, or what the likely outcome would be
 - The scenario should require applying knowledge, not just recalling definitions
 - Example contexts: home-based therapy, school setting, clinic, parent training, supervision""",
-    QuestionCategory.DEFINITION: """Create a DEFINITION/CONCEPT question:
-- Focus on testing understanding of a key term or principle
-- Can ask for the best definition, what term describes something, or to identify examples
+    QuestionCategory.DEFINITION: """Create a CONTEXTUALIZED DEFINITION question:
+- Present a brief scenario or example that demonstrates the concept
+- Ask what term/principle is being illustrated OR what best describes the situation
+- The scenario should require understanding the concept, not just memorizing the definition
 - Include subtle distinctions that require true understanding
 - Good distractors should be related terms that are commonly confused
-- Reference specific terminology from the BCBA Task List""",
+- Reference specific terminology from the BCBA Task List
+
+Example format: "A behavior analyst observes that a client's responding increases when
+the therapist provides verbal praise. Later, responding decreases when praise is withheld.
+This pattern best illustrates which principle?" (Answer: Positive reinforcement / extinction)""",
     QuestionCategory.APPLICATION: """Create an APPLICATION question (novel situation):
 - Present a situation the candidate likely hasn't seen before
 - Require applying principles to determine the best course of action
@@ -413,25 +444,15 @@ class QuestionGenerator:
             logger.error(f"Cannot generate question: {e}")
             return None
 
-        # Determine question type
-        if question_type is None:
-            mc_ratio = self.settings.type_distribution.get("multiple_choice", 0.8)
-            question_type = (
-                QuestionType.MULTIPLE_CHOICE
-                if random.random() < mc_ratio
-                else QuestionType.TRUE_FALSE
-            )
+        # Always use multiple choice (true/false eliminated for better discrimination)
+        question_type = QuestionType.MULTIPLE_CHOICE
 
         # Determine question category
         if question_category is None:
             question_category = self._select_category()
 
         # Build user prompt with category and content-area specific guidance
-        type_instruction = (
-            "Create a multiple choice question with exactly 4 options (A, B, C, D)."
-            if question_type == QuestionType.MULTIPLE_CHOICE
-            else "Create a true/false question."
-        )
+        type_instruction = "Create a multiple choice question with exactly 4 options (A, B, C, D)."
 
         category_instruction = CATEGORY_INSTRUCTIONS.get(
             question_category, CATEGORY_INSTRUCTIONS[QuestionCategory.SCENARIO]
@@ -457,16 +478,17 @@ Include a source_citation with the specific section, heading, and a brief quote 
 IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
 {{
   "question": "...",
-  "type": "multiple_choice" or "true_false",
-  "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or {{"True": "...", "False": "..."}},
-  "correct_answer": "A" or "B" or "C" or "D" or "True" or "False",
+  "type": "multiple_choice",
+  "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+  "correct_answer": "A" or "B" or "C" or "D",
   "explanation": "...",
   "category": "{question_category.value}",
+  "difficulty": 1-5,
   "source_citation": {{"section": "...", "heading": "...", "quote": "..."}}
 }}"""
 
         try:
-            # Use Responses API with file_search tool
+            # Use Responses API with file_search tool and reasoning
             response = await self._call_api_with_retry(
                 self.client.responses.create,
                 model=self.settings.openai_model,
@@ -474,6 +496,10 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
                     {"role": "developer", "content": SYSTEM_PROMPT + "\n\nYou MUST respond with valid JSON only, no markdown formatting."},
                     {"role": "user", "content": user_prompt},
                 ],
+                reasoning={
+                    "effort": self.settings.reasoning_effort,
+                    "summary": self.settings.reasoning_summary,
+                },
                 tools=[{
                     "type": "file_search",
                     "vector_store_ids": [store_id],
@@ -607,12 +633,12 @@ Generate exactly {count} BCBA exam questions about {content_area.value} based on
 {area_guidance}
 
 <distribution_requirements>
-Generate this specific mix of question types:
+Generate this specific mix of question categories:
 - {scenario_count} scenario-based questions (clinical vignettes) - set category to "scenario"
-- {definition_count} definition/concept questions - set category to "definition"
+- {definition_count} contextualized definition/concept questions - set category to "definition"
 - {application_count} application questions - set category to "application"
 
-Approximately {round(count * 0.8)} should be multiple choice, {count - round(count * 0.8)} should be true/false.
+ALL questions must be multiple choice with 4 options (A, B, C, D). Do NOT generate true/false questions.
 </distribution_requirements>
 
 Generate {count} diverse questions testing different concepts within this area.
@@ -624,18 +650,19 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
   "questions": [
     {{
       "question": "...",
-      "type": "multiple_choice" or "true_false",
-      "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}} or {{"True": "...", "False": "..."}},
-      "correct_answer": "A" or "B" or "C" or "D" or "True" or "False",
+      "type": "multiple_choice",
+      "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+      "correct_answer": "A" or "B" or "C" or "D",
       "explanation": "...",
       "category": "scenario" or "definition" or "application",
+      "difficulty": 1-5,
       "source_citation": {{"section": "...", "heading": "...", "quote": "..."}}
     }}
   ]
 }}"""
 
         try:
-            # Use Responses API with file_search tool
+            # Use Responses API with file_search tool and reasoning
             response = await self._call_api_with_retry(
                 self.client.responses.create,
                 model=self.settings.openai_model,
@@ -643,6 +670,10 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
                     {"role": "developer", "content": BATCH_SYSTEM_PROMPT + "\n\nYou MUST respond with valid JSON only, no markdown formatting."},
                     {"role": "user", "content": user_prompt},
                 ],
+                reasoning={
+                    "effort": self.settings.reasoning_effort,
+                    "summary": self.settings.reasoning_summary,
+                },
                 tools=[{
                     "type": "file_search",
                     "vector_store_ids": [store_id],

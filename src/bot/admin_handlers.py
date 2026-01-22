@@ -474,3 +474,82 @@ async def notify_command(
     await update.message.reply_text(
         f"{setting_type.title()} notifications {'enabled' if enabled else 'disabled'}."
     )
+
+
+# =============================================================================
+# Scheduler Diagnostics
+# =============================================================================
+
+
+@dm_only_middleware
+@admin_middleware
+async def scheduler_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /scheduler command - show scheduler status and diagnostics."""
+    if not update.effective_user or not update.message:
+        return
+
+    args = context.args or []
+    log_user_action(logger, update.effective_user.id, f"/scheduler {' '.join(args)}")
+
+    from src.services.scheduler import get_scheduler_status, refresh_scheduler_timezones
+
+    # Check for subcommand
+    if args and args[0].lower() == "refresh":
+        # Refresh scheduler timezones
+        added = await refresh_scheduler_timezones(context.application)
+        await update.message.reply_text(
+            f"Scheduler timezones refreshed.\n"
+            f"Added jobs for {added} new timezone(s)."
+        )
+        return
+
+    # Get scheduler status
+    status = await get_scheduler_status()
+
+    lines = [
+        "*Scheduler Status*\n",
+        f"Running: {'Yes' if status['running'] else 'NO'}\n",
+        f"Total Jobs: {status['total_jobs']}",
+        f"Morning Hour: {status['morning_hour']}:00",
+        f"Evening Hour: {status['evening_hour']}:00",
+        f"\n*Subscribed Users:* {status['subscribed_users']}",
+    ]
+
+    # Users by timezone
+    if status["users_by_timezone"]:
+        lines.append("\n*Users by Timezone:*")
+        for tz, count in sorted(status["users_by_timezone"].items(), key=lambda x: -x[1]):
+            lines.append(f"  {tz}: {count}")
+
+    # Delivery statistics
+    stats = status["delivery_stats"]
+    if stats["last_delivery"]:
+        lines.append(f"\n*Delivery Stats:*")
+        lines.append(f"Last Delivery: {stats['last_delivery'].strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"Total Deliveries: {stats['total_deliveries']}")
+        lines.append(f"Success: {stats['total_success']}")
+        lines.append(f"Failures: {stats['total_failures']}")
+
+    # Upcoming jobs (next 5)
+    if status["jobs"]:
+        lines.append("\n*Next Scheduled Jobs:*")
+        # Sort by next_run and take first 5
+        upcoming = sorted(
+            [j for j in status["jobs"] if j["next_run"]],
+            key=lambda x: x["next_run"]
+        )[:5]
+        for job in upcoming:
+            # Parse and format the time
+            next_run = job["next_run"][:16].replace("T", " ")
+            name = job["name"][:30]
+            lines.append(f"  {next_run} - {name}")
+
+    lines.append("\n_Use /scheduler refresh to add jobs for new timezones_")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.MARKDOWN,
+    )

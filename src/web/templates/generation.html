@@ -253,32 +253,27 @@
                             </p>
                         </div>
 
-                        <!-- Dedup Model -->
+                        <!-- Dedup Threshold -->
                         <div>
                             <label class="block text-sm font-medium text-text-primary mb-1.5">
-                                Dedup Model
+                                Dedup Similarity Threshold
                             </label>
-                            <select class="select" x-model="config.dedup_model">
-                                <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
-                                <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-                            </select>
+                            <input type="number" class="input" x-model.number="config.dedup_threshold"
+                                   step="0.05" min="0.5" max="0.99">
                             <p class="text-xs text-text-muted mt-1">
-                                Model for duplicate detection
+                                Cosine similarity threshold for duplicate detection (0.85 = 85% similar)
                             </p>
                         </div>
 
-                        <!-- Confidence Threshold -->
+                        <!-- Dedup Check Limit -->
                         <div>
                             <label class="block text-sm font-medium text-text-primary mb-1.5">
-                                Dedup Confidence
+                                Dedup Check Limit
                             </label>
-                            <select class="select" x-model="config.dedup_confidence_threshold">
-                                <option value="high">High only</option>
-                                <option value="medium">Medium + High</option>
-                                <option value="low">All levels</option>
-                            </select>
+                            <input type="number" class="input" x-model.number="config.dedup_check_limit"
+                                   min="10" max="100">
                             <p class="text-xs text-text-muted mt-1">
-                                Min confidence to reject duplicate
+                                Max existing questions to compare against (per content area)
                             </p>
                         </div>
                     </div>

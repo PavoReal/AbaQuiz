@@ -1,11 +1,11 @@
 # AbaQuiz
 
-A Telegram bot for BCBA (Board Certified Behavior Analyst) exam preparation. Delivers daily Applied Behavior Analysis quiz questions powered by Claude AI, with gamification features to keep you motivated.
+A Telegram bot for BCBA (Board Certified Behavior Analyst) exam preparation. Delivers daily Applied Behavior Analysis quiz questions powered by GPT 5.2, with gamification features to keep you motivated.
 
 ## Features
 
 - **Daily Quiz Delivery** - Receive 2 questions per day at 8 AM and 8 PM (configurable, respects your timezone)
-- **AI-Generated Questions** - Claude AI generates questions from official BCBA study materials
+- **AI-Generated Questions** - GPT 5.2 generates questions from official BCBA study materials
 - **On-Demand Quizzes** - Request extra questions anytime with `/quiz`
 - **Progress Tracking** - Track accuracy overall and per content area
 - **Gamification** - Earn points, maintain streaks, unlock achievements
@@ -18,7 +18,7 @@ A Telegram bot for BCBA (Board Certified Behavior Analyst) exam preparation. Del
 |-----------|------------|
 | Language | Python 3.11+ |
 | Bot Framework | python-telegram-bot v20+ |
-| LLM | Anthropic Claude API |
+| LLM | OpenAI GPT 5.2 API |
 | Database | SQLite (aiosqlite) |
 | Scheduling | APScheduler |
 | PDF Processing | pdfplumber |
@@ -30,7 +30,7 @@ A Telegram bot for BCBA (Board Certified Behavior Analyst) exam preparation. Del
 
 - Python 3.11 or higher
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
-- Anthropic API Key (from [console.anthropic.com](https://console.anthropic.com))
+- OpenAI API Key (from [platform.openai.com](https://platform.openai.com))
 
 ### Installation
 
@@ -53,7 +53,7 @@ A Telegram bot for BCBA (Board Certified Behavior Analyst) exam preparation. Del
 4. Add your credentials to `.env`:
    ```env
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-   ANTHROPIC_API_KEY=your_anthropic_api_key
+   OPENAI_API_KEY=your_openai_api_key
    ```
 
 5. Run the bot:
@@ -132,7 +132,7 @@ The Docker setup includes:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | - | Telegram bot token from BotFather |
-| `ANTHROPIC_API_KEY` | Yes | - | Anthropic API key |
+| `OPENAI_API_KEY` | Yes | - | OpenAI API key |
 | `DATABASE_PATH` | No | `./data/abaquiz.db` | SQLite database path |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 | `TZ` | No | `America/Los_Angeles` | Container timezone |
@@ -199,7 +199,7 @@ AbaQuiz/
 │   │   ├── keyboards.py        # Inline keyboards
 │   │   └── messages.py         # Message templates
 │   ├── services/
-│   │   ├── question_generator.py   # Claude API integration
+│   │   ├── question_generator.py   # OpenAI API integration
 │   │   ├── pool_manager.py         # Question pool management
 │   │   ├── scheduler.py            # Quiz scheduling
 │   │   └── usage_tracker.py        # API cost tracking
@@ -274,6 +274,23 @@ data/processed/
 
 The pipeline automatically filters BCBA-relevant materials and skips non-exam content (BCaBA, RBT, etc.). See [docs/preprocessing_guide.md](docs/preprocessing_guide.md) for the full guide.
 
+### Vector Store Pipeline Testing
+
+Test the vector store upload and question generation pipeline:
+
+```bash
+# Run the full pipeline test (creates store if needed, generates 3 questions)
+python -m src.scripts.test_vector_pipeline
+```
+
+This script will:
+1. Create the vector store if it doesn't exist (or sync if files changed)
+2. Upload all processed markdown files from `data/processed/`
+3. Generate 3 test questions using file_search across different content areas
+4. Save results to `data/test_questions_output.json`
+
+For manual vector store management, see the CLI commands in `CLAUDE.md`.
+
 ### Question Pool Seeding
 
 Seed the question pool with initial questions before launching:
@@ -292,7 +309,7 @@ python -m src.scripts.seed_questions --dry-run
 python -m src.scripts.seed_questions --resume --count 300
 ```
 
-**Cost estimate:** ~$4.50 for 250 questions (Sonnet for generation + Haiku for deduplication)
+**Cost estimate:** ~$4.50 for 250 questions (GPT 5.2 for generation + embeddings for deduplication)
 
 ### Database CLI
 
@@ -350,7 +367,7 @@ The bot automatically maintains the question pool using an active-user-based thr
 - **Active user**: Anyone who answered a question in the last 7 days
 - **Batch size**: 50 questions per generation cycle
 - **Distribution**: Questions distributed by BCBA exam content area weights
-- **Deduplication**: Uses Claude Haiku to prevent similar questions
+- **Deduplication**: Uses OpenAI embeddings to prevent similar questions
 - **Schedule**: Runs daily at 3 AM Pacific
 
 Configuration in `config/config.json`:
@@ -360,7 +377,7 @@ Configuration in `config/config.json`:
     "threshold": 20,
     "batch_size": 50,
     "active_days": 7,
-    "dedup_model": "claude-haiku-4-5"
+    "dedup_threshold": 0.85
   }
 }
 ```
@@ -375,7 +392,7 @@ Questions cover all areas of the BCBA 6th Edition Task List:
 
 1. **Scheduling**: APScheduler triggers quiz delivery at configured times per user timezone
 2. **Question Selection**: Hybrid approach - mostly random, with 20% targeting weak areas
-3. **Generation**: Claude loads relevant content and generates structured questions
+3. **Generation**: GPT 5.2 uses file search to retrieve relevant content and generates structured questions
 4. **Delivery**: Questions sent via Telegram with inline answer buttons
 5. **Feedback**: Immediate feedback with explanations after answering
 

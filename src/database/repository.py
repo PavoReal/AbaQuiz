@@ -208,6 +208,23 @@ class Repository:
             await self.db.commit()
             return cursor.rowcount
 
+    async def reset_daily_extra_counts_by_timezone(self, timezone: str) -> int:
+        """
+        Reset daily extra question counts for users in a specific timezone.
+
+        Args:
+            timezone: The timezone to reset limits for
+
+        Returns:
+            Number of users updated
+        """
+        async with self.db.execute(
+            "UPDATE users SET daily_extra_count = 0 WHERE daily_extra_count > 0 AND timezone = ?",
+            (timezone,),
+        ) as cursor:
+            await self.db.commit()
+            return cursor.rowcount
+
     # =========================================================================
     # Question Operations
     # =========================================================================
@@ -222,14 +239,15 @@ class Repository:
         content_area: str,
         model: Optional[str] = None,
         source_citation: Optional[dict[str, Any]] = None,
+        difficulty: Optional[int] = None,
     ) -> int:
         """Create a new question and return its ID."""
         citation_json = json.dumps(source_citation) if source_citation else None
         async with self.db.execute(
             """
             INSERT INTO questions
-            (content, question_type, options, correct_answer, explanation, content_area, model, source_citation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (content, question_type, options, correct_answer, explanation, content_area, model, source_citation, difficulty)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 content,
@@ -240,6 +258,7 @@ class Repository:
                 content_area,
                 model,
                 citation_json,
+                difficulty,
             ),
         ) as cursor:
             await self.db.commit()

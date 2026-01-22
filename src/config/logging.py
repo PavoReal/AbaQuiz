@@ -9,12 +9,13 @@ import sys
 from typing import Optional
 
 
-def setup_logging(level: str = "INFO") -> None:
+def setup_logging(level: str = "INFO", debug_scheduler: bool = False) -> None:
     """
     Configure application logging.
 
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        debug_scheduler: If True, enable detailed APScheduler logging for debugging
     """
     # Convert string level to logging constant
     numeric_level = getattr(logging, level.upper(), logging.INFO)
@@ -42,9 +43,16 @@ def setup_logging(level: str = "INFO") -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+
+    # APScheduler logging - can be enabled for debugging scheduled delivery issues
+    if debug_scheduler:
+        logging.getLogger("apscheduler").setLevel(logging.DEBUG)
+        logging.getLogger("apscheduler.scheduler").setLevel(logging.DEBUG)
+        logging.getLogger("apscheduler.executors").setLevel(logging.INFO)
+    else:
+        logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:
