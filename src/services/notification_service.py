@@ -66,7 +66,7 @@ EVENT_PRIORITIES: dict[NotificationEventType, NotificationPriority] = {
     NotificationEventType.GENERATION_COMPLETE: NotificationPriority.MEDIUM,
     NotificationEventType.BAN_ACTION: NotificationPriority.MEDIUM,
     NotificationEventType.USER_MILESTONE: NotificationPriority.LOW,
-    NotificationEventType.NEW_USER: NotificationPriority.LOW,
+    NotificationEventType.NEW_USER: NotificationPriority.HIGH,
     NotificationEventType.ADMIN_ACTION: NotificationPriority.LOW,
 }
 
