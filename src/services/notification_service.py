@@ -82,7 +82,7 @@ DEFAULT_BEHAVIORS: dict[NotificationEventType, dict[str, bool]] = {
     NotificationEventType.GENERATION_COMPLETE: {"realtime": False, "summary": True},
     NotificationEventType.BAN_ACTION: {"realtime": True, "summary": True},
     NotificationEventType.USER_MILESTONE: {"realtime": False, "summary": True},
-    NotificationEventType.NEW_USER: {"realtime": False, "summary": True},
+    NotificationEventType.NEW_USER: {"realtime": True, "summary": True},
     NotificationEventType.ADMIN_ACTION: {"realtime": False, "summary": True},
 }
 

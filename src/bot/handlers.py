@@ -88,6 +88,9 @@ async def start_command(
             username=user.username,
             timezone=settings.default_timezone,
         )
+        # Notify admins of new user
+        from src.services.notification_service import notify_new_user
+        await notify_new_user(telegram_id=user.id, username=user.username)
 
     # Send welcome message
     await update.message.reply_text(
