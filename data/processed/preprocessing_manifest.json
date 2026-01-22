@@ -116,8 +116,242 @@
         "PECS-Glossary.md"
       ],
       "error": null
+    },
+    "Barber-Developmental-Assessment.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.743309",
+      "pages": 28,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "Barber-Developmental-Assessment.md"
+      ],
+      "error": null
+    },
+    "PaTTAN-VB-MAPP-Materials.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.745227",
+      "pages": 15,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "PaTTAN-VB-MAPP-Materials.md"
+      ],
+      "error": null
+    },
+    "VB-MAPP-Guide-Sample.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.746462",
+      "pages": 13,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "VB-MAPP-Guide-Sample.md"
+      ],
+      "error": null
+    },
+    "VB-MAPP-Level1-Protocol.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.747578",
+      "pages": 18,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "VB-MAPP-Level1-Protocol.md"
+      ],
+      "error": null
+    },
+    "VB-MAPP-Protocol-Sample.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.748306",
+      "pages": 8,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "VB-MAPP-Protocol-Sample.md"
+      ],
+      "error": null
+    },
+    "FBATrainingManualDocumentforOPIMAEP.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.749336",
+      "pages": 46,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 2,
+      "content_area": null,
+      "output_files": [
+        "FBATrainingManualDocumentforOPIMAEP.md"
+      ],
+      "error": null
+    },
+    "MasterABA-DR-Guide-2024.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.750050",
+      "pages": 40,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "MasterABA-DR-Guide-2024.md"
+      ],
+      "error": null
+    },
+    "AFIRM-FBA-Brief-2024.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.750806",
+      "pages": 38,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "AFIRM-FBA-Brief-2024.md"
+      ],
+      "error": null
+    },
+    "CT-FBA-Guide.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.751405",
+      "pages": 6,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "CT-FBA-Guide.md"
+      ],
+      "error": null
+    },
+    "ERIC-FBA-EBP-Brief.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.752089",
+      "pages": 31,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "ERIC-FBA-EBP-Brief.md"
+      ],
+      "error": null
+    },
+    "Missouri-FBA-Workbook.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.753064",
+      "pages": 74,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 2,
+      "content_area": null,
+      "output_files": [
+        "Missouri-FBA-Workbook.md"
+      ],
+      "error": null
+    },
+    "Oregon-FBA-Training-Manual.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.754236",
+      "pages": 46,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 2,
+      "content_area": null,
+      "output_files": [
+        "Oregon-FBA-Training-Manual.md"
+      ],
+      "error": null
+    },
+    "PaTTAN-FBA-Process.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.755020",
+      "pages": 12,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "PaTTAN-FBA-Process.md"
+      ],
+      "error": null
+    },
+    "Harvard-SCED-Family.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.755761",
+      "pages": 21,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "Harvard-SCED-Family.md"
+      ],
+      "error": null
+    },
+    "UFL-Behavioral-Momentum.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.756521",
+      "pages": 25,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "UFL-Behavioral-Momentum.md"
+      ],
+      "error": null
+    },
+    "PA-VB-Project-Guide.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.757618",
+      "pages": 59,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 2,
+      "content_area": null,
+      "output_files": [
+        "PA-VB-Project-Guide.md"
+      ],
+      "error": null
+    },
+    "Skinner-VB-Study-Guide.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.758951",
+      "pages": 239,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 6,
+      "content_area": null,
+      "output_files": [
+        "Skinner-VB-Study-Guide.md"
+      ],
+      "error": null
+    },
+    "Sundberg-VB-Glossary.pdf": {
+      "status": "completed",
+      "processed_at": "2026-01-21T20:44:22.759484",
+      "pages": 2,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "api_calls": 1,
+      "content_area": null,
+      "output_files": [
+        "Sundberg-VB-Glossary.md"
+      ],
+      "error": null
     }
   },
   "version": 2,
-  "last_updated": "2026-01-20T22:16:18.896655"
+  "last_updated": "2026-01-21T20:44:22.759488"
 }
