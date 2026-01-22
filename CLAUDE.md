@@ -56,6 +56,13 @@ source .venv/bin/activate
 .venv/bin/python -m src.scripts.seed_questions --dry-run      # Cost estimate
 .venv/bin/python -m src.scripts.seed_questions --resume       # Continue seeding
 
+# Admin management
+.venv/bin/python -m src.scripts.manage_admins list            # List all admins
+.venv/bin/python -m src.scripts.manage_admins add <id>        # Add admin
+.venv/bin/python -m src.scripts.manage_admins add <id> --super # Add super admin
+.venv/bin/python -m src.scripts.manage_admins remove <id>     # Remove admin
+.venv/bin/python -m src.scripts.manage_admins migrate         # Migrate from config.json
+
 # Preprocessing (one-time)
 .venv/bin/python -m src.preprocessing.run_preprocessing --input data/raw/ --output data/processed/
 
@@ -78,7 +85,7 @@ source .venv/bin/activate
 | Module | Purpose |
 |--------|---------|
 | `src/bot/handlers.py` | User commands (/start, /quiz, /stats) |
-| `src/bot/admin_handlers.py` | Admin commands (/ban, /broadcast, /usage) |
+| `src/bot/admin_handlers.py` | Admin commands (/ban, /broadcast, /bonus, /usage) |
 | `src/bot/middleware.py` | DM-only, ban check, rate limiting decorators |
 | `src/services/question_generator.py` | GPT 5.2 + file_search for question generation |
 | `src/services/vector_store_manager.py` | OpenAI vector store management |
@@ -119,8 +126,8 @@ Tech: aiohttp server + Jinja2 templates + HTMX for reactivity + Tailwind CSS
 
 Key config sections:
 - `question_generation.openai_model` - GPT model for question generation (default: gpt-5.2)
-- `preprocessing.model` - GPT model for PDF extraction (default: gpt-5.2)
 - `pool_management.threshold` - Min unseen questions per active user (default: 20)
+- `pool_management.active_days` - Days to consider user "active" (default: 7)
 - `pool_management.dedup_threshold` - Embedding similarity threshold (default: 0.85)
 - `pool_management.bcba_weights` - Distribution across 9 content areas
 - `pricing` - Token costs for GPT-5.2 and embeddings
@@ -135,8 +142,9 @@ Core tables:
 - `achievements` - Unlocked badges
 
 Admin tables:
+- `admins` - Bot administrators (DB-backed, replaces config.json)
 - `banned_users`, `admin_settings`, `api_usage`
-- `sent_questions` - With is_scheduled flag
+- `sent_questions` - With is_scheduled and is_bonus flags
 - `question_reports` - User-reported issues
 - `question_stats` - Question performance metrics
 - `question_reviews` - Admin quality reviews

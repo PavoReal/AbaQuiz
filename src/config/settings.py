@@ -69,10 +69,6 @@ class Settings:
 
         # Question generation
         gen_config = self._config.get("question_generation", {})
-        self.pool_threshold_per_area = gen_config.get(
-            "pool_threshold_per_area", 20
-        )
-        self.batch_size = gen_config.get("batch_size", 10)
         self.type_distribution = gen_config.get(
             "type_distribution",
             {"multiple_choice": 0.8, "true_false": 0.2},
@@ -81,13 +77,6 @@ class Settings:
         self.openai_model = gen_config.get("openai_model", "gpt-5.2")
         self.reasoning_effort = gen_config.get("reasoning_effort", "low")
         self.reasoning_summary = gen_config.get("reasoning_summary", "auto")
-        self.generation_max_tokens = gen_config.get("max_tokens", 8192)
-
-        # Preprocessing settings
-        preprocess_config = self._config.get("preprocessing", {})
-        self.preprocessing_model = preprocess_config.get("model", "gpt-5.2")
-        self.preprocessing_max_tokens = preprocess_config.get("max_tokens", 32768)
-        self.preprocessing_delay = preprocess_config.get("delay_between_calls", 1.2)
 
         # Question selection
         sel_config = self._config.get("question_selection", {})
@@ -110,11 +99,8 @@ class Settings:
         self.pool_batch_size = pool_config.get("batch_size", 50)
         self.pool_active_days = pool_config.get("active_days", 7)
         self.pool_dedup_check_limit = pool_config.get("dedup_check_limit", 30)
-        # Embedding-based dedup settings
+        # Embedding-based dedup threshold
         self.pool_dedup_threshold = pool_config.get("dedup_threshold", 0.85)
-        self.pool_dedup_embedding_model = pool_config.get(
-            "dedup_embedding_model", "text-embedding-3-large"
-        )
         self.pool_generation_batch_size = pool_config.get(
             "generation_batch_size", 5
         )

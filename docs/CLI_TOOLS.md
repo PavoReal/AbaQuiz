@@ -7,9 +7,10 @@ This document covers the command-line tools for preprocessing BCBA study materia
 1. [Prerequisites](#prerequisites)
 2. [PDF Preprocessing](#pdf-preprocessing)
 3. [Question Seeding](#question-seeding)
-4. [Database CLI](#database-cli)
-5. [Health Checks](#health-checks)
-6. [Workflow Examples](#workflow-examples)
+4. [Admin Management](#admin-management)
+5. [Database CLI](#database-cli)
+6. [Health Checks](#health-checks)
+7. [Workflow Examples](#workflow-examples)
 
 ---
 
@@ -42,7 +43,7 @@ python -m src.preprocessing.run_preprocessing
 python -m src.preprocessing.run_preprocessing -y
 
 # Process a single PDF file
-python -m src.preprocessing.run_preprocessing -f data/raw/bacb/Ethics-Code.pdf
+python -m src.preprocessing.run_preprocessing -f data/raw/Ethics-Code-for-Behavior-Analysts.pdf
 
 # Dry run (see what would be processed without calling API)
 python -m src.preprocessing.run_preprocessing --dry-run
@@ -218,6 +219,73 @@ Valid content area names (case-insensitive, partial match supported):
 
 ---
 
+## Admin Management
+
+The admin management CLI tool allows you to manage bot administrators via the database.
+
+### Basic Usage
+
+```bash
+# Add a regular admin
+python -m src.scripts.manage_admins add 123456789
+
+# Add a super admin (can manage other admins)
+python -m src.scripts.manage_admins add 123456789 --super
+
+# Remove an admin
+python -m src.scripts.manage_admins remove 123456789
+
+# List all admins
+python -m src.scripts.manage_admins list
+
+# Migrate admins from config.json to database (one-time)
+python -m src.scripts.manage_admins migrate
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `add <id>` | Add an admin (use `--super` for super admin privileges) |
+| `remove <id>` | Remove an admin (prevents removing last super admin) |
+| `list` | List all admins with their type and added date |
+| `migrate` | One-time migration from config.json to database |
+
+### Admin Types
+
+- **Regular Admin**: Can use admin commands (`/ban`, `/users`, `/bonus`, etc.)
+- **Super Admin**: Can also manage other admins via the CLI tool
+
+### Migration from config.json
+
+If you have existing admins in `config.json` under `admin.admin_users`, use the migrate command:
+
+```bash
+python -m src.scripts.manage_admins migrate
+```
+
+This will:
+1. Read the `admin_users` array from config.json
+2. Add them to the database (first one becomes super admin)
+3. The database becomes the source of truth
+
+After migration, the `admin_users` array in config.json can be left empty but serves as a fallback.
+
+### Example Output
+
+```bash
+$ python -m src.scripts.manage_admins list
+
+Admins (2 total):
+
+Telegram ID     Type         Added By        Added At
+------------------------------------------------------------
+123456789       super        CLI             2025-01-21 10:30:15
+987654321       regular      123456789       2025-01-21 11:45:22
+```
+
+---
+
 ## Database CLI
 
 The main module includes database inspection commands for debugging and monitoring.
@@ -323,11 +391,11 @@ python -m src.main --db-stats
 
 ```bash
 # 1. Add PDF to data/raw/
-cp ~/Downloads/New-BCBA-Material.pdf data/raw/bacb/
+cp ~/Downloads/New-BCBA-Material.pdf data/raw/
 
 # 2. Update BCBA_DOCUMENTS mapping in pdf_processor.py
 # 3. Process the new PDF
-python -m src.preprocessing.run_preprocessing -f data/raw/bacb/New-BCBA-Material.pdf -v
+python -m src.preprocessing.run_preprocessing -f data/raw/New-BCBA-Material.pdf -v
 
 # 4. Verify content health
 python -c "from src.services.content_validator import get_content_health; print(get_content_health())"
@@ -359,7 +427,7 @@ python -m src.main --db-list --limit 10
 python -m src.main --db-show 42
 
 # Reprocess a specific PDF if content is missing
-python -m src.preprocessing.run_preprocessing -f data/raw/bacb/BCBA-Handbook.pdf --force -v
+python -m src.preprocessing.run_preprocessing -f data/raw/BCBA-Handbook.pdf --force -v
 ```
 
 ---

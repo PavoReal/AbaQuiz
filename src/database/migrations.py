@@ -9,6 +9,7 @@ import aiosqlite
 from src.config.logging import get_logger
 from src.database.models import (
     ALL_TABLES,
+    CREATE_ADMINS_TABLE,
     CREATE_INDEXES,
     CREATE_QUESTION_REPORTS_TABLE,
     CREATE_QUESTION_STATS_TABLE,
@@ -79,6 +80,11 @@ async def run_migrations(db_path: str) -> None:
         if current_version < 2:
             await migrate_to_v2(db)
             await set_schema_version(db, 2)
+
+        # Migration v3: Add admins table and is_bonus column to sent_questions
+        if current_version < 3:
+            await migrate_to_v3(db)
+            await set_schema_version(db, 3)
 
         await db.commit()
 
@@ -236,3 +242,39 @@ async def migrate_to_v2(db: aiosqlite.Connection) -> None:
     logger.info("Updated times_shown from sent_questions")
 
     logger.info("Migration v2 complete")
+
+
+async def migrate_to_v3(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 3.
+
+    Adds admin management features:
+    - New table: admins (database-backed admin management)
+    - New column: sent_questions.is_bonus (track bonus questions)
+    """
+    logger.info("Running migration v3: Adding admin management features")
+
+    # Create admins table
+    await db.execute(CREATE_ADMINS_TABLE)
+    logger.info("Created admins table")
+
+    # Create index for admins
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_admins_telegram_id ON admins(telegram_id)"
+    )
+    logger.info("Created index for admins table")
+
+    # Add is_bonus column to sent_questions
+    async with db.execute("PRAGMA table_info(sent_questions)") as cursor:
+        columns = await cursor.fetchall()
+        sent_columns = [col[1] for col in columns]
+
+    if "is_bonus" not in sent_columns:
+        await db.execute(
+            "ALTER TABLE sent_questions ADD COLUMN is_bonus BOOLEAN DEFAULT 0"
+        )
+        logger.info("Added 'is_bonus' column to sent_questions table")
+    else:
+        logger.info("Column 'is_bonus' already exists in sent_questions table")
+
+    logger.info("Migration v3 complete")

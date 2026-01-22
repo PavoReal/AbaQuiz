@@ -43,7 +43,6 @@ class PoolManager:
 
     DEFAULT_THRESHOLD = 20
     DEFAULT_BATCH_SIZE = 50
-    ACTIVE_DAYS = 7
     DEDUP_CHECK_LIMIT = 30  # Check against most recent N questions per area
 
     def __init__(self) -> None:
@@ -91,10 +90,11 @@ class PoolManager:
         """
         repo = await get_repository(self.settings.database_path)
 
-        # Get current pool status
-        active_users = await repo.get_active_user_count(days=self.ACTIVE_DAYS)
+        # Get current pool status (use config value for active days)
+        active_days = self.settings.pool_active_days
+        active_users = await repo.get_active_user_count(days=active_days)
         avg_unseen = await repo.get_avg_unseen_questions_for_active_users(
-            days=self.ACTIVE_DAYS
+            days=active_days
         )
         total_questions = await repo.get_total_question_count()
 

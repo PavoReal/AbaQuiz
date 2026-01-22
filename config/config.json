@@ -15,16 +15,13 @@
     "requests_per_minute": 10
   },
   "question_generation": {
-    "pool_threshold_per_area": 20,
-    "batch_size": 10,
     "type_distribution": {
       "multiple_choice": 1.0,
       "true_false": 0.0
     },
     "openai_model": "gpt-5.2",
     "reasoning_effort": "medium",
-    "reasoning_summary": "auto",
-    "max_tokens": 8192
+    "reasoning_summary": "auto"
   },
   "pool_management": {
     "threshold": 20,
@@ -32,7 +29,6 @@
     "active_days": 7,
     "dedup_check_limit": 30,
     "dedup_threshold": 0.85,
-    "dedup_embedding_model": "text-embedding-3-large",
     "generation_batch_size": 5,
     "max_concurrent_generation": 20,
     "bcba_weights": {
@@ -62,11 +58,6 @@
     "Access denied. Consider this a punishment procedure. (ID: {user_id})",
     "You've been placed on a DRO schedule... of zero access. (ID: {user_id})"
   ],
-  "preprocessing": {
-    "model": "gpt-5.2",
-    "max_tokens": 32768,
-    "delay_between_calls": 1.2
-  },
   "pricing": {
     "openai": {
       "gpt-5.2": {

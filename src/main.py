@@ -207,6 +207,7 @@ def register_handlers(application) -> None:
     from src.bot.admin_handlers import (
         admin_command,
         ban_command,
+        bonus_command,
         broadcast_command,
         notify_command,
         scheduler_command,
@@ -257,6 +258,7 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("ban", ban_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("bonus", bonus_command))
     application.add_handler(CommandHandler("usage", usage_command))
     application.add_handler(CommandHandler("notify", notify_command))
     application.add_handler(CommandHandler("scheduler", scheduler_command))

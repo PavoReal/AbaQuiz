@@ -169,6 +169,16 @@ CREATE TABLE IF NOT EXISTS question_reviews (
 )
 """
 
+# Admins table - database-backed admin management
+CREATE_ADMINS_TABLE = """
+CREATE TABLE IF NOT EXISTS admins (
+    telegram_id INTEGER PRIMARY KEY,
+    added_by INTEGER,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_super_admin BOOLEAN DEFAULT 0
+)
+"""
+
 # Indexes for performance
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
@@ -185,6 +195,7 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_question_reports_user_id ON question_reports(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_question_reports_status ON question_reports(status)",
     "CREATE INDEX IF NOT EXISTS idx_question_reviews_question_id ON question_reviews(question_id)",
+    "CREATE INDEX IF NOT EXISTS idx_admins_telegram_id ON admins(telegram_id)",
 ]
 
 # All table creation statements in order
@@ -201,4 +212,5 @@ ALL_TABLES = [
     CREATE_QUESTION_REPORTS_TABLE,
     CREATE_QUESTION_STATS_TABLE,
     CREATE_QUESTION_REVIEWS_TABLE,
+    CREATE_ADMINS_TABLE,
 ]

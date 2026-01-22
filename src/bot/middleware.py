@@ -213,6 +213,8 @@ def admin_middleware(
 ) -> Callable[..., Coroutine[Any, Any, Any]]:
     """
     Middleware to restrict access to admin users only.
+
+    Checks database first, then falls back to config.json for backwards compatibility.
     """
 
     @wraps(func)
@@ -227,8 +229,15 @@ def admin_middleware(
 
         user_id = update.effective_user.id
         settings = get_settings()
+        repo = await get_repository(settings.database_path)
 
-        if not settings.is_admin(user_id):
+        # Check database first (new system)
+        is_db_admin = await repo.is_admin(user_id)
+
+        # Fall back to config.json (legacy, for backwards compatibility)
+        is_config_admin = settings.is_admin(user_id)
+
+        if not is_db_admin and not is_config_admin:
             logger.warning(f"Non-admin user {user_id} tried to access admin command")
 
             if update.effective_message:

@@ -445,17 +445,29 @@ class Repository:
         question_id: int,
         message_id: Optional[int] = None,
         is_scheduled: bool = False,
+        is_bonus: bool = False,
     ) -> int:
         """Record that a question was sent to a user."""
         async with self.db.execute(
             """
-            INSERT INTO sent_questions (user_id, question_id, message_id, is_scheduled)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO sent_questions (user_id, question_id, message_id, is_scheduled, is_bonus)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (user_id, question_id, message_id, is_scheduled),
+            (user_id, question_id, message_id, is_scheduled, is_bonus),
         ) as cursor:
             await self.db.commit()
             return cursor.lastrowid
+
+    async def was_bonus_sent_today(self) -> bool:
+        """Check if a bonus question was already sent today."""
+        async with self.db.execute(
+            """
+            SELECT 1 FROM sent_questions
+            WHERE is_bonus = 1 AND DATE(sent_at) = DATE('now')
+            LIMIT 1
+            """
+        ) as cursor:
+            return await cursor.fetchone() is not None
 
     async def get_latest_daily_question_for_user(
         self, user_id: int
@@ -833,6 +845,95 @@ class Repository:
             (telegram_id,),
         ) as cursor:
             return await cursor.fetchone() is not None
+
+    # =========================================================================
+    # Admin Management Operations
+    # =========================================================================
+
+    async def add_admin(
+        self,
+        telegram_id: int,
+        added_by: Optional[int] = None,
+        is_super_admin: bool = False,
+    ) -> bool:
+        """
+        Add an admin to the database.
+
+        Args:
+            telegram_id: Telegram user ID to add as admin
+            added_by: Telegram ID of admin who added this user
+            is_super_admin: Whether this admin can manage other admins
+
+        Returns:
+            True if newly added, False if already an admin
+        """
+        try:
+            await self.db.execute(
+                """
+                INSERT INTO admins (telegram_id, added_by, is_super_admin)
+                VALUES (?, ?, ?)
+                """,
+                (telegram_id, added_by, is_super_admin),
+            )
+            await self.db.commit()
+            logger.info(
+                f"Added admin {telegram_id} (super={is_super_admin}) by {added_by}"
+            )
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def remove_admin(self, telegram_id: int) -> bool:
+        """
+        Remove an admin from the database.
+
+        Args:
+            telegram_id: Telegram user ID to remove
+
+        Returns:
+            True if removed, False if wasn't an admin
+        """
+        async with self.db.execute(
+            "DELETE FROM admins WHERE telegram_id = ?",
+            (telegram_id,),
+        ) as cursor:
+            await self.db.commit()
+            if cursor.rowcount > 0:
+                logger.info(f"Removed admin {telegram_id}")
+                return True
+            return False
+
+    async def is_admin(self, telegram_id: int) -> bool:
+        """Check if user is an admin in the database."""
+        async with self.db.execute(
+            "SELECT 1 FROM admins WHERE telegram_id = ?",
+            (telegram_id,),
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def is_super_admin(self, telegram_id: int) -> bool:
+        """Check if user is a super admin (can manage other admins)."""
+        async with self.db.execute(
+            "SELECT 1 FROM admins WHERE telegram_id = ? AND is_super_admin = 1",
+            (telegram_id,),
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def get_all_admins(self) -> list[dict[str, Any]]:
+        """Get all admins from the database."""
+        async with self.db.execute(
+            "SELECT * FROM admins ORDER BY added_at"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_super_admin_count(self) -> int:
+        """Get count of super admins."""
+        async with self.db.execute(
+            "SELECT COUNT(*) as count FROM admins WHERE is_super_admin = 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
 
     # =========================================================================
     # Admin Settings Operations

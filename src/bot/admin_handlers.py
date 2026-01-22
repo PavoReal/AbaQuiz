@@ -4,13 +4,14 @@ Admin command handlers for AbaQuiz.
 Handles user management, broadcasting, and system monitoring.
 """
 
+import time
 from datetime import datetime
 
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from src.bot import messages
+from src.bot import keyboards, messages
 from src.bot.middleware import admin_middleware, dm_only_middleware
 from src.config.logging import get_logger, log_user_action
 from src.config.settings import get_settings
@@ -553,3 +554,130 @@ async def scheduler_command(
         "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN,
     )
+
+
+# =============================================================================
+# Bonus Question Push
+# =============================================================================
+
+
+@dm_only_middleware
+@admin_middleware
+async def bonus_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /bonus command - push bonus question to all subscribed users."""
+    if not update.effective_user or not update.message:
+        return
+
+    args = context.args or []
+    log_user_action(logger, update.effective_user.id, f"/bonus {' '.join(args)}")
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Check if bonus was already sent today
+    bonus_sent_today = await repo.was_bonus_sent_today()
+    if bonus_sent_today:
+        await update.message.reply_text(
+            "A bonus question was already sent today.\n\n"
+            "Bonus questions can only be sent once per day."
+        )
+        return
+
+    # Get all subscribed users
+    users = await repo.get_subscribed_users()
+
+    if not users:
+        await update.message.reply_text("No subscribed users to send bonus questions to.")
+        return
+
+    # Check for confirmation
+    if not args or args[0].lower() != "confirm":
+        await update.message.reply_text(
+            f"Ready to send bonus questions to {len(users)} subscribed users.\n\n"
+            f"Use /bonus confirm to proceed."
+        )
+        return
+
+    await _execute_bonus_push(update, context, users, repo)
+
+
+async def _execute_bonus_push(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    users: list[dict],
+    repo,
+) -> None:
+    """Execute the bonus question push to all users."""
+    await update.message.reply_text(
+        f"Sending bonus questions to {len(users)} users..."
+    )
+
+    success_count = 0
+    failure_count = 0
+    no_questions_count = 0
+
+    for user in users:
+        telegram_id = user["telegram_id"]
+        internal_user_id = user["id"]
+
+        try:
+            # Get unseen question for user
+            question = await repo.get_unseen_question_for_user(internal_user_id)
+
+            if not question:
+                no_questions_count += 1
+                continue
+
+            # Format and send question
+            question_text = messages.format_question(question)
+            keyboard = keyboards.build_answer_keyboard(
+                question_id=question["id"],
+                question_type=question["question_type"],
+                options=question.get("options"),
+            )
+
+            message = await context.bot.send_message(
+                chat_id=telegram_id,
+                text=f"*Bonus Question!*\n\n{question_text}",
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+            # Record sent question with is_bonus=True
+            await repo.record_sent_question(
+                user_id=internal_user_id,
+                question_id=question["id"],
+                message_id=message.message_id,
+                is_scheduled=False,
+                is_bonus=True,
+            )
+
+            # Track question shown for stats
+            await repo.record_question_shown(question["id"])
+
+            # Store sent time for response time tracking
+            if "question_sent_times" not in context.bot_data:
+                context.bot_data["question_sent_times"] = {}
+            context.bot_data["question_sent_times"][
+                f"{telegram_id}:{question['id']}"
+            ] = time.time()
+
+            success_count += 1
+
+        except Exception as e:
+            failure_count += 1
+            logger.warning(f"Failed to send bonus question to {telegram_id}: {e}")
+
+    # Report results
+    result_lines = [
+        "Bonus push complete!\n",
+        f"Sent: {success_count}",
+        f"Failed: {failure_count}",
+    ]
+    if no_questions_count > 0:
+        result_lines.append(f"No unseen questions: {no_questions_count}")
+
+    await update.message.reply_text("\n".join(result_lines))

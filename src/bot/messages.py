@@ -385,6 +385,7 @@ def format_admin_help() -> str:
 
 📢 *System*
 /broadcast <message> - Message all users
+/bonus confirm - Push bonus question to all users (1x/day)
 /usage - API usage stats
 /notify - Notification settings
 /scheduler - Scheduler status & diagnostics
