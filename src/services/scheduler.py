@@ -246,6 +246,31 @@ async def reset_daily_limits(timezone: str) -> None:
         logger.error(f"Failed to reset daily limits for {timezone}: {e}")
 
 
+async def compute_daily_analytics_job(timezone: str) -> None:
+    """
+    Compute daily analytics snapshots for a timezone.
+
+    Runs 5 minutes after midnight to ensure the day is complete.
+    For Pacific timezone, also computes system-wide snapshots.
+
+    Args:
+        timezone: The timezone that just completed midnight
+    """
+    from src.services.analytics_service import compute_daily_analytics
+
+    try:
+        result = await compute_daily_analytics(timezone)
+        user_count = result.get("user_result", {}).get("users_processed", 0)
+        logger.info(f"Computed analytics for {timezone}: {user_count} user snapshots")
+
+        if result.get("system_result"):
+            logger.info(
+                f"System snapshots computed: {result['system_result'].get('total_answers', 0)} answers"
+            )
+    except Exception as e:
+        logger.error(f"Failed to compute analytics for {timezone}: {e}")
+
+
 async def get_unique_user_timezones() -> list[str]:
     """
     Get list of unique timezones from actual subscribed users in the database.
@@ -423,6 +448,20 @@ async def start_scheduler(application: Application) -> AsyncIOScheduler:
             args=[timezone],
             id=f"reset_limits_{timezone}",
             name=f"Reset daily limits for {timezone}",
+            replace_existing=True,
+        )
+
+        # Daily analytics computation - 5 minutes after midnight
+        _scheduler.add_job(
+            compute_daily_analytics_job,
+            CronTrigger(
+                hour=0,
+                minute=5,
+                timezone=timezone,
+            ),
+            args=[timezone],
+            id=f"analytics_{timezone}",
+            name=f"Daily analytics for {timezone}",
             replace_existing=True,
         )
 
@@ -616,6 +655,20 @@ async def refresh_scheduler_timezones(application: Application) -> int:
             args=[timezone],
             id=f"reset_limits_{timezone}",
             name=f"Reset daily limits for {timezone}",
+            replace_existing=True,
+        )
+
+        # Daily analytics computation
+        _scheduler.add_job(
+            compute_daily_analytics_job,
+            CronTrigger(
+                hour=0,
+                minute=5,
+                timezone=timezone,
+            ),
+            args=[timezone],
+            id=f"analytics_{timezone}",
+            name=f"Daily analytics for {timezone}",
             replace_existing=True,
         )
 
