@@ -51,6 +51,7 @@ def mock_openai_response():
         "correct_answer": "B",
         "explanation": "A functional behavior assessment (FBA) is used to identify the function or purpose of a behavior.",
         "category": "definition",
+        "difficulty": 3,
     }
 
 
@@ -66,14 +67,16 @@ def mock_batch_response():
                 "correct_answer": "A",
                 "explanation": "Explanation 1",
                 "category": "scenario",
+                "difficulty": 2,
             },
             {
                 "question": "Question 2?",
-                "type": "true_false",
-                "options": {"True": "True", "False": "False"},
-                "correct_answer": "True",
+                "type": "multiple_choice",
+                "options": {"A": "Opt A", "B": "Opt B", "C": "Opt C", "D": "Opt D"},
+                "correct_answer": "A",
                 "explanation": "Explanation 2",
                 "category": "definition",
+                "difficulty": 3,
             },
         ]
     }
@@ -91,6 +94,8 @@ def create_mock_openai_response(json_data: dict) -> MagicMock:
 
     mock_response = MagicMock()
     mock_response.output = [mock_message]
+    # Set usage to None to skip usage extraction (avoids MagicMock comparison issues)
+    mock_response.usage = None
 
     return mock_response
 

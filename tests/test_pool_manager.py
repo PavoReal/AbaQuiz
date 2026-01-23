@@ -267,7 +267,7 @@ class TestGenerateWithDedup:
         assert result[0] == mock_question
 
     @pytest.mark.asyncio
-    async def test_generate_with_dedup_rejects_duplicates(self, mock_settings, mock_question):
+    async def test_generate_with_dedup_rejects_duplicates(self, mock_settings, mock_question, mock_existing_question):
         """Test that duplicate questions are rejected."""
         # Create two questions, one duplicate
         question1 = mock_question.copy()
@@ -278,7 +278,8 @@ class TestGenerateWithDedup:
         mock_generator.generate_question_batch = AsyncMock(return_value=[question1, question2])
 
         mock_repo = MagicMock()
-        mock_repo.get_questions_by_content_area = AsyncMock(return_value=[])
+        # Return existing question to avoid short-circuit in check_duplicate
+        mock_repo.get_questions_by_content_area = AsyncMock(return_value=[mock_existing_question])
 
         # First question is unique, second is duplicate
         result1 = MagicMock()
