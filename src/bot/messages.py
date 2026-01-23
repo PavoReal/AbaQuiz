@@ -635,6 +635,54 @@ def format_admin_help() -> str:
 _<user> can be @username or user ID_"""
 
 
+def format_help_combined(
+    include_admin: bool = False,
+    include_super_admin: bool = False,
+) -> str:
+    """
+    Format help message based on user's admin status.
+
+    Args:
+        include_admin: If True, append admin commands section
+        include_super_admin: If True, append super admin section
+
+    Returns:
+        Formatted help text with appropriate sections
+    """
+    sections = [format_help()]
+
+    if include_admin:
+        sections.append("\n\n" + _format_admin_help_section())
+
+    if include_super_admin:
+        sections.append("\n\n" + _format_super_admin_help_section())
+
+    return "".join(sections)
+
+
+def _format_admin_help_section() -> str:
+    """Format admin commands section for /help."""
+    return """*Admin Commands*
+
+/users - User statistics & list
+/ban <user> - Ban a user
+/unban <user> - Unban a user
+/broadcast <msg> - Message all subscribers
+/bonus confirm - Push bonus question (1x/day)
+/usage - API usage stats
+/notify - Notification settings
+/scheduler - Scheduler status
+/admin - Full admin help"""
+
+
+def _format_super_admin_help_section() -> str:
+    """Format super admin section for /help."""
+    return """*Super Admin*
+
+Manage admins via CLI:
+`python -m src.scripts.manage_admins`"""
+
+
 def format_no_daily_questions(timezone: str) -> str:
     """Format message when user has no daily questions yet."""
     return f"""You haven't received any daily questions yet.

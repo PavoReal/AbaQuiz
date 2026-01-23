@@ -1520,14 +1520,27 @@ async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle /help command."""
+    """Handle /help command - shows commands based on admin status."""
     if not update.effective_user or not update.message:
         return
 
-    log_user_action(logger, update.effective_user.id, "/help")
+    user = update.effective_user
+    log_user_action(logger, user.id, "/help")
+
+    # Check admin status (database first, config fallback)
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    is_admin = await repo.is_admin(user.id) or settings.is_admin(user.id)
+    is_super_admin = await repo.is_super_admin(user.id) if is_admin else False
+
+    help_text = messages.format_help_combined(
+        include_admin=is_admin,
+        include_super_admin=is_super_admin,
+    )
 
     await update.message.reply_text(
-        messages.format_help(),
+        help_text,
         parse_mode=ParseMode.MARKDOWN,
     )
 
