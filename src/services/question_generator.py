@@ -229,6 +229,13 @@ For each question, provide a source_citation from the study content:
 - quote: A brief relevant quote (max 50 words) that supports the question
 </citation_requirement>"""
 
+# Difficulty emphasis guidance for targeted generation
+DIFFICULTY_EMPHASIS: dict[int, str] = {
+    3: "Focus on questions requiring integration of multiple concepts.",
+    4: "Focus on complex scenarios with multiple variables. Require analysis of nuanced situations where simple recall is insufficient.",
+    5: "Focus on evaluation and synthesis questions requiring multi-step reasoning and nuanced professional judgment. These should challenge even experienced practitioners.",
+}
+
 # Category-specific instructions
 CATEGORY_INSTRUCTIONS: dict[QuestionCategory, str] = {
     QuestionCategory.SCENARIO: """Create a SCENARIO-BASED question (clinical vignette):
@@ -486,6 +493,7 @@ class QuestionGenerator:
         content_area: ContentArea,
         question_type: Optional[QuestionType] = None,
         question_category: Optional[QuestionCategory] = None,
+        difficulty_min: Optional[int] = None,
     ) -> Optional[dict[str, Any]]:
         """
         Generate a single question for a content area using file search.
@@ -497,6 +505,7 @@ class QuestionGenerator:
             content_area: The BCBA content area
             question_type: Type of question (if None, follows distribution)
             question_category: Style of question (if None, follows distribution)
+            difficulty_min: Minimum difficulty level 1-5 (None = any)
 
         Returns:
             Question dict or None if generation fails
@@ -525,6 +534,18 @@ class QuestionGenerator:
         area_guidance = CONTENT_AREA_GUIDANCE.get(content_area, "")
         area_query = CONTENT_AREA_QUERIES.get(content_area, content_area.value)
 
+        # Build difficulty requirement if specified
+        difficulty_instruction = ""
+        if difficulty_min and difficulty_min > 1:
+            emphasis = DIFFICULTY_EMPHASIS.get(difficulty_min, "")
+            difficulty_instruction = f"""
+<difficulty_requirement>
+Generate a question with difficulty level {difficulty_min} or higher only.
+{emphasis}
+Do NOT generate a question rated below {difficulty_min}.
+</difficulty_requirement>
+"""
+
         user_prompt = f"""Search the BCBA study materials for content about: {area_query}
 
 Based on the retrieved content about {content_area.value}, {type_instruction}
@@ -534,7 +555,7 @@ Based on the retrieved content about {content_area.value}, {type_instruction}
 </question_style>
 
 {area_guidance}
-
+{difficulty_instruction}
 Generate a challenging but fair exam-style question that matches the requested style. Set the category field to "{question_category.value}".
 
 Include a source_citation with the specific section, heading, and a brief quote from the retrieved content that this question is based on.
@@ -666,6 +687,7 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
         self,
         content_area: ContentArea,
         count: int = 5,
+        difficulty_min: Optional[int] = None,
     ) -> list[dict[str, Any]]:
         """
         Generate multiple questions in a single API call using file search.
@@ -676,6 +698,7 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
         Args:
             content_area: The BCBA content area
             count: Number of questions to generate (default 5)
+            difficulty_min: Minimum difficulty level 1-5 (None = any)
 
         Returns:
             List of question dicts
@@ -695,6 +718,18 @@ IMPORTANT: You MUST respond with ONLY valid JSON matching this exact structure:
         definition_count = round(count * 0.3)
         application_count = count - scenario_count - definition_count
 
+        # Build difficulty requirement if specified
+        difficulty_instruction = ""
+        if difficulty_min and difficulty_min > 1:
+            emphasis = DIFFICULTY_EMPHASIS.get(difficulty_min, "")
+            difficulty_instruction = f"""
+<difficulty_requirement>
+Generate questions with difficulty level {difficulty_min} or higher only.
+{emphasis}
+Do NOT generate questions rated below {difficulty_min}.
+</difficulty_requirement>
+"""
+
         user_prompt = f"""Search the BCBA study materials for content about: {area_query}
 
 Generate exactly {count} BCBA exam questions about {content_area.value} based on the retrieved content.
@@ -709,7 +744,7 @@ Generate this specific mix of question categories:
 
 ALL questions must be multiple choice with 4 options (A, B, C, D). Do NOT generate true/false questions.
 </distribution_requirements>
-
+{difficulty_instruction}
 Generate {count} diverse questions testing different concepts within this area.
 
 For each question, include a source_citation with the specific section, heading, and a brief quote from the retrieved content that the question is based on.

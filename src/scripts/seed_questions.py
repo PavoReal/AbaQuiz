@@ -139,6 +139,7 @@ async def seed_questions(
     dry_run: bool = False,
     resume: bool = False,
     skip_dedup: bool = False,
+    difficulty_min: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Seed the question pool with initial questions.
@@ -149,6 +150,7 @@ async def seed_questions(
         dry_run: If True, show plan without generating
         resume: If True, check existing counts and fill gaps
         skip_dedup: If True, skip deduplication (for initial seeding on empty pool)
+        difficulty_min: Minimum difficulty level 1-5 (None = any)
 
     Returns:
         Dict with results
@@ -164,7 +166,7 @@ async def seed_questions(
 
     try:
         return await _seed_questions_impl(
-            repo, pool_manager, total_count, specific_area, dry_run, resume, skip_dedup
+            repo, pool_manager, total_count, specific_area, dry_run, resume, skip_dedup, difficulty_min
         )
     finally:
         await repo.close()
@@ -178,6 +180,7 @@ async def _seed_questions_impl(
     dry_run: bool = False,
     resume: bool = False,
     skip_dedup: bool = False,
+    difficulty_min: Optional[int] = None,
 ) -> dict[str, Any]:
     """Implementation of seed_questions with repository passed in."""
 
@@ -217,6 +220,8 @@ async def _seed_questions_impl(
     print("  (Parallel generation: ENABLED - all content areas processed simultaneously)")
     if skip_dedup:
         print("  (Deduplication: SKIPPED)")
+    if difficulty_min:
+        print(f"  (Minimum difficulty: {difficulty_min})")
     print(f"\nDistribution by content area:")
 
     for area in ContentArea:
@@ -243,6 +248,7 @@ async def _seed_questions_impl(
             "planned": total_to_generate,
             "by_area": {a.value: c for a, c in distribution.items()},
             "cost_estimate": cost_estimate,
+            "difficulty_min": difficulty_min,
             "status": "dry_run",
         }
 
@@ -262,6 +268,7 @@ async def _seed_questions_impl(
         "started_at": datetime.now().isoformat(),
         "target_total": total_to_generate,
         "skip_dedup": skip_dedup,
+        "difficulty_min": difficulty_min,
         "completed_areas": [],
         "in_progress_areas": list(distribution.keys()),
         "stats": {"generated": 0, "rejected": 0},
@@ -288,9 +295,13 @@ async def _seed_questions_impl(
         print(f"[{area.value}] Starting generation of {count} questions...")
         try:
             if skip_dedup:
-                questions = await pool_manager.generate_without_dedup(area, count)
+                questions = await pool_manager.generate_without_dedup(
+                    area, count, difficulty_min=difficulty_min
+                )
             else:
-                questions = await pool_manager.generate_with_dedup(area, count)
+                questions = await pool_manager.generate_with_dedup(
+                    area, count, difficulty_min=difficulty_min
+                )
             print(f"[{area.value}] Generated {len(questions)}/{count} questions")
             return (area, questions, None)
         except Exception as e:
@@ -458,6 +469,15 @@ Examples:
         help="Enable verbose logging",
     )
 
+    parser.add_argument(
+        "--difficulty-min",
+        "-m",
+        type=int,
+        default=None,
+        choices=[1, 2, 3, 4, 5],
+        help="Minimum difficulty level 1-5 (default: any)",
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -484,6 +504,7 @@ Examples:
                 dry_run=args.dry_run,
                 resume=args.resume,
                 skip_dedup=args.skip_dedup,
+                difficulty_min=args.difficulty_min,
             )
         )
 

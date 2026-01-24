@@ -149,6 +149,22 @@
                         Faster but may generate similar questions
                     </p>
 
+                    <!-- Minimum Difficulty -->
+                    <div>
+                        <label class="block text-sm font-medium text-text-primary mb-1.5">
+                            Minimum Difficulty
+                        </label>
+                        <select class="input" x-model="difficultyMin">
+                            <option value="">Any (1-5)</option>
+                            <option value="3">Medium+ (3+)</option>
+                            <option value="4">Hard+ (4+)</option>
+                            <option value="5">Expert (5)</option>
+                        </select>
+                        <p class="text-xs text-text-muted mt-1">
+                            Generate only questions at or above this difficulty level
+                        </p>
+                    </div>
+
                     <!-- Cost Estimate -->
                     <div class="p-3 rounded-md" style="background-color: var(--color-bg-subtle);">
                         <div class="text-sm font-medium text-text-primary mb-1">Estimated Cost</div>

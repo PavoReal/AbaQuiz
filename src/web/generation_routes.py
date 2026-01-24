@@ -193,6 +193,14 @@ async def api_start_generation(request: web.Request) -> web.Response:
 
     count = data.get("count", 50)
     skip_dedup = data.get("skip_dedup", False)
+    difficulty_min = data.get("difficulty_min")
+
+    # Validate difficulty_min
+    if difficulty_min is not None:
+        if not isinstance(difficulty_min, int) or difficulty_min < 1 or difficulty_min > 5:
+            return web.json_response({
+                "error": "difficulty_min must be an integer between 1 and 5",
+            }, status=400)
 
     if not isinstance(count, int) or count < 1 or count > 500:
         return web.json_response({
@@ -218,11 +226,12 @@ async def api_start_generation(request: web.Request) -> web.Response:
         "started_at": datetime.now(timezone.utc).isoformat(),
         "complete": False,
         "skip_dedup": skip_dedup,
+        "difficulty_min": difficulty_min,
     }
 
     # Start background task
     app = request.app
-    task = asyncio.create_task(_run_generation(app, distribution, skip_dedup))
+    task = asyncio.create_task(_run_generation(app, distribution, skip_dedup, difficulty_min))
     _generation_state["task"] = task
 
     return web.json_response({
@@ -256,6 +265,7 @@ async def _run_generation(
     app: web.Application,
     distribution: dict[str, int],
     skip_dedup: bool,
+    difficulty_min: int | None = None,
 ) -> None:
     """Background task to run question generation in parallel."""
     settings = get_settings()
@@ -300,10 +310,14 @@ async def _run_generation(
 
         try:
             if skip_dedup:
-                questions = await pool_manager.generate_without_dedup(area, target_count)
+                questions = await pool_manager.generate_without_dedup(
+                    area, target_count, difficulty_min=difficulty_min
+                )
                 dedup_cost = 0
             else:
-                questions = await pool_manager.generate_with_dedup(area, target_count)
+                questions = await pool_manager.generate_with_dedup(
+                    area, target_count, difficulty_min=difficulty_min
+                )
                 # Estimate dedup cost (5 checks per question on average)
                 dedup_cost = len(questions) * 5 * COST_PER_DEDUP
 

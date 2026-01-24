@@ -18,6 +18,7 @@ function generationControls() {
         // Generation controls
         questionCount: 50,
         skipDedup: false,
+        difficultyMin: '',
         distribution: {},
         costEstimate: 0,
 
@@ -155,7 +156,8 @@ function generationControls() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         count: this.questionCount,
-                        skip_dedup: this.skipDedup
+                        skip_dedup: this.skipDedup,
+                        difficulty_min: this.difficultyMin ? parseInt(this.difficultyMin) : null
                     })
                 });
 

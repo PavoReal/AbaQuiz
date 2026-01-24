@@ -224,9 +224,17 @@ class PoolManager:
         content_area: ContentArea,
         batch_size: int,
         batch_num: int,
+        difficulty_min: Optional[int] = None,
     ) -> tuple[int, list[dict[str, Any]]]:
         """
         Generate a single batch with rate limiting via semaphore.
+
+        Args:
+            generator: Question generator instance
+            content_area: Content area to generate for
+            batch_size: Number of questions per batch
+            batch_num: Batch number for ordering results
+            difficulty_min: Minimum difficulty level 1-5 (None = any)
 
         Returns:
             Tuple of (batch_num, questions)
@@ -236,6 +244,7 @@ class PoolManager:
                 batch = await generator.generate_question_batch(
                     content_area=content_area,
                     count=batch_size,
+                    difficulty_min=difficulty_min,
                 )
                 return (batch_num, batch or [])
             except Exception as e:
@@ -248,6 +257,7 @@ class PoolManager:
         self,
         content_area: ContentArea,
         count: int,
+        difficulty_min: Optional[int] = None,
     ) -> list[dict[str, Any]]:
         """
         Generate questions with deduplication checking, using parallel batch generation.
@@ -258,6 +268,7 @@ class PoolManager:
         Args:
             content_area: The content area to generate for
             count: Number of questions to generate
+            difficulty_min: Minimum difficulty level 1-5 (None = any)
 
         Returns:
             List of unique question dicts
@@ -282,7 +293,7 @@ class PoolManager:
 
         batch_tasks = [
             self._generate_batch_with_semaphore(
-                generator, content_area, batch_size, batch_num
+                generator, content_area, batch_size, batch_num, difficulty_min
             )
             for batch_num in range(max_batches)
         ]
@@ -359,6 +370,7 @@ class PoolManager:
         self,
         content_area: ContentArea,
         count: int,
+        difficulty_min: Optional[int] = None,
     ) -> list[dict[str, Any]]:
         """
         Generate questions without deduplication checks, using parallel batch generation.
@@ -368,6 +380,7 @@ class PoolManager:
         Args:
             content_area: The content area to generate for
             count: Number of questions to generate
+            difficulty_min: Minimum difficulty level 1-5 (None = any)
 
         Returns:
             List of question dicts
@@ -384,7 +397,7 @@ class PoolManager:
         # Generate all batches in parallel with semaphore limiting
         batch_tasks = [
             self._generate_batch_with_semaphore(
-                generator, content_area, batch_size, batch_num
+                generator, content_area, batch_size, batch_num, difficulty_min
             )
             for batch_num in range(batches_needed)
         ]
