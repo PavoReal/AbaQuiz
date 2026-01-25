@@ -194,6 +194,7 @@ async def api_start_generation(request: web.Request) -> web.Response:
     count = data.get("count", 50)
     skip_dedup = data.get("skip_dedup", False)
     difficulty_min = data.get("difficulty_min")
+    selected_areas = data.get("selected_areas")  # None means all areas
 
     # Validate difficulty_min
     if difficulty_min is not None:
@@ -207,9 +208,23 @@ async def api_start_generation(request: web.Request) -> web.Response:
             "error": "Count must be between 1 and 500",
         }, status=400)
 
+    # Validate selected_areas if provided
+    if selected_areas is not None:
+        if not isinstance(selected_areas, list) or len(selected_areas) == 0:
+            return web.json_response({
+                "error": "selected_areas must be a non-empty list",
+            }, status=400)
+        # Validate all areas exist
+        valid_area_names = {area.value for area in ContentArea}
+        for area_name in selected_areas:
+            if area_name not in valid_area_names:
+                return web.json_response({
+                    "error": f"Invalid content area: {area_name}",
+                }, status=400)
+
     # Initialize progress state
     pool_manager = get_pool_manager()
-    distribution = _calculate_distribution(count, pool_manager.bcba_weights)
+    distribution = _calculate_distribution(count, pool_manager.bcba_weights, selected_areas)
 
     _generation_state["running"] = True
     _generation_state["cancel_requested"] = False
@@ -241,8 +256,32 @@ async def api_start_generation(request: web.Request) -> web.Response:
     })
 
 
-def _calculate_distribution(count: int, weights: dict) -> dict[str, int]:
-    """Calculate question distribution across content areas."""
+def _calculate_distribution(
+    count: int,
+    weights: dict,
+    selected_areas: list[str] | None = None,
+) -> dict[str, int]:
+    """Calculate question distribution across content areas.
+
+    Args:
+        count: Total number of questions to generate
+        weights: BCBA weights dict (ContentArea -> float)
+        selected_areas: Optional list of area names to include. If None, all areas are used.
+    """
+    # Filter weights to only selected areas if specified
+    if selected_areas is not None:
+        filtered_weights = {
+            area: weight
+            for area, weight in weights.items()
+            if (area.value if hasattr(area, 'value') else str(area)) in selected_areas
+        }
+        # Re-normalize weights to sum to 1.0
+        total_weight = sum(filtered_weights.values())
+        if total_weight > 0:
+            weights = {area: w / total_weight for area, w in filtered_weights.items()}
+        else:
+            weights = filtered_weights
+
     distribution = {}
     remaining = count
 
@@ -484,8 +523,22 @@ async def api_calculate_distribution(request: web.Request) -> web.Response:
             "error": "Count must be between 1 and 500",
         }, status=400)
 
+    # Get selected areas from query params (can be repeated: ?areas=X&areas=Y)
+    selected_areas = request.query.getall("areas", None)
+    if selected_areas is not None and len(selected_areas) == 0:
+        selected_areas = None
+
+    # Validate selected areas if provided
+    if selected_areas is not None:
+        valid_area_names = {area.value for area in ContentArea}
+        for area_name in selected_areas:
+            if area_name not in valid_area_names:
+                return web.json_response({
+                    "error": f"Invalid content area: {area_name}",
+                }, status=400)
+
     pool_manager = get_pool_manager()
-    distribution = _calculate_distribution(count, pool_manager.bcba_weights)
+    distribution = _calculate_distribution(count, pool_manager.bcba_weights, selected_areas)
 
     # Calculate cost estimate
     # GPT 5.2 pricing (Jan 2026)

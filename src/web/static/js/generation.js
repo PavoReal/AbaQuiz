@@ -21,6 +21,7 @@ function generationControls() {
         difficultyMin: '',
         distribution: {},
         costEstimate: 0,
+        selectedAreas: [],  // Empty = all selected (initialized in init)
 
         // State
         isRunning: false,
@@ -42,11 +43,22 @@ function generationControls() {
         COST_PER_QUESTION: 0.09,
         COST_PER_DEDUP: 0.002 * 5, // ~5 dedup checks per question
 
+        // Computed property for all categories selected
+        get allCategoriesSelected() {
+            return this.poolStats.areas.length > 0 &&
+                   this.selectedAreas.length === this.poolStats.areas.length;
+        },
+
         init() {
             // Load initial data
-            this.loadPoolStats();
+            this.loadPoolStats().then(() => {
+                // Initialize selectedAreas with all areas after pool stats load
+                if (this.selectedAreas.length === 0 && this.poolStats.areas.length > 0) {
+                    this.selectedAreas = this.poolStats.areas.map(a => a.name);
+                }
+                this.updateDistribution();
+            });
             this.loadConfig();
-            this.updateDistribution();
 
             // Check for running generation
             this.checkProgress();
@@ -64,11 +76,38 @@ function generationControls() {
             });
         },
 
+        toggleCategory(areaName) {
+            const index = this.selectedAreas.indexOf(areaName);
+            if (index === -1) {
+                this.selectedAreas.push(areaName);
+            } else {
+                this.selectedAreas.splice(index, 1);
+            }
+            this.updateDistribution();
+        },
+
+        toggleAllCategories() {
+            if (this.allCategoriesSelected) {
+                // Deselect all
+                this.selectedAreas = [];
+            } else {
+                // Select all
+                this.selectedAreas = this.poolStats.areas.map(a => a.name);
+            }
+            this.updateDistribution();
+        },
+
         async loadPoolStats() {
             try {
                 const response = await fetch('/api/generation/pool-stats');
                 if (response.ok) {
-                    this.poolStats = await response.json();
+                    const newStats = await response.json();
+                    // If this is the first load, initialize selectedAreas with all areas
+                    const isFirstLoad = this.poolStats.areas.length === 0;
+                    this.poolStats = newStats;
+                    if (isFirstLoad && this.selectedAreas.length === 0) {
+                        this.selectedAreas = newStats.areas.map(a => a.name);
+                    }
                 }
             } catch (error) {
                 console.error('Failed to load pool stats:', error);
@@ -107,15 +146,26 @@ function generationControls() {
         },
 
         async updateDistribution() {
-            // Validate count
+            // Validate count and selection
             if (this.questionCount < 1 || this.questionCount > 500) {
                 this.distribution = {};
                 this.costEstimate = 0;
                 return;
             }
 
+            // If no areas selected, show empty distribution
+            if (this.selectedAreas.length === 0) {
+                this.distribution = {};
+                this.costEstimate = 0;
+                return;
+            }
+
             try {
-                const response = await fetch(`/api/generation/distribution?count=${this.questionCount}`);
+                // Build query string with selected areas
+                const params = new URLSearchParams({ count: this.questionCount });
+                this.selectedAreas.forEach(area => params.append('areas', area));
+
+                const response = await fetch(`/api/generation/distribution?${params.toString()}`);
                 if (response.ok) {
                     const data = await response.json();
                     this.distribution = data.distribution;
@@ -147,6 +197,10 @@ function generationControls() {
                 alert('Please enter a valid question count (1-500)');
                 return;
             }
+            if (this.selectedAreas.length === 0) {
+                alert('Please select at least one content area');
+                return;
+            }
 
             this.isStarting = true;
 
@@ -157,7 +211,8 @@ function generationControls() {
                     body: JSON.stringify({
                         count: this.questionCount,
                         skip_dedup: this.skipDedup,
-                        difficulty_min: this.difficultyMin ? parseInt(this.difficultyMin) : null
+                        difficulty_min: this.difficultyMin ? parseInt(this.difficultyMin) : null,
+                        selected_areas: this.selectedAreas
                     })
                 });
 

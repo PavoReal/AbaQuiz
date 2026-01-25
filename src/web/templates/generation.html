@@ -135,6 +135,39 @@
                         </p>
                     </div>
 
+                    <!-- Category Selection -->
+                    <div>
+                        <div class="flex items-center justify-between mb-1.5">
+                            <label class="block text-sm font-medium text-text-primary">
+                                Content Areas
+                            </label>
+                            <button type="button"
+                                    class="text-xs hover:underline"
+                                    style="color: var(--color-primary);"
+                                    @click="toggleAllCategories()">
+                                <span x-text="allCategoriesSelected ? 'Deselect All' : 'Select All'"></span>
+                            </button>
+                        </div>
+                        <div class="space-y-1.5 p-3 rounded-md max-h-48 overflow-y-auto custom-scrollbar" style="background-color: var(--color-bg-subtle);">
+                            <template x-for="area in poolStats.areas" :key="area.name">
+                                <div class="flex items-center gap-2">
+                                    <input type="checkbox"
+                                           :id="'area-' + area.name.replace(/[^a-zA-Z0-9]/g, '-')"
+                                           class="checkbox"
+                                           :checked="selectedAreas.includes(area.name)"
+                                           @change="toggleCategory(area.name)">
+                                    <label :for="'area-' + area.name.replace(/[^a-zA-Z0-9]/g, '-')"
+                                           class="text-sm text-text-primary cursor-pointer flex-1 truncate"
+                                           x-text="area.name"></label>
+                                    <span class="text-xs text-text-muted" x-text="area.weight_pct"></span>
+                                </div>
+                            </template>
+                        </div>
+                        <p class="text-xs text-text-muted mt-1">
+                            <span x-text="selectedAreas.length"></span> of <span x-text="poolStats.areas.length"></span> areas selected
+                        </p>
+                    </div>
+
                     <!-- Skip Dedup Checkbox -->
                     <div class="flex items-center gap-2">
                         <input type="checkbox"
