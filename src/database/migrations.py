@@ -101,6 +101,11 @@ async def run_migrations(db_path: str) -> None:
             await migrate_to_v5(db)
             await set_schema_version(db, 5)
 
+        # Migration v6: Add difficulty_min column to users table
+        if current_version < 6:
+            await migrate_to_v6(db)
+            await set_schema_version(db, 6)
+
         await db.commit()
 
 
@@ -378,3 +383,28 @@ async def migrate_to_v5(db: aiosqlite.Connection) -> None:
     logger.info("Created indexes for queue tables")
 
     logger.info("Migration v5 complete")
+
+
+async def migrate_to_v6(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 6.
+
+    Adds user difficulty preference:
+    - New column: users.difficulty_min (minimum difficulty level 1-5)
+    """
+    logger.info("Running migration v6: Adding difficulty_min column to users table")
+
+    # Check if column already exists (in case of partial migration)
+    async with db.execute("PRAGMA table_info(users)") as cursor:
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+
+    if "difficulty_min" not in column_names:
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN difficulty_min INTEGER DEFAULT 1"
+        )
+        logger.info("Added 'difficulty_min' column to users table")
+    else:
+        logger.info("Column 'difficulty_min' already exists in users table")
+
+    logger.info("Migration v6 complete")

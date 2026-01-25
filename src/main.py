@@ -220,6 +220,8 @@ def register_handlers(application) -> None:
         answer_callback,
         areas_command,
         daily_command,
+        difficulty_callback,
+        difficulty_command,
         expand_source_callback,
         focus_callback,
         health_command,
@@ -231,10 +233,12 @@ def register_handlers(application) -> None:
         report_cancel_callback,
         report_submit_callback,
         settings_command,
+        settings_menu_callback,
         start_command,
         stats_command,
         stop_command,
         streak_command,
+        subscription_callback,
         timezone_callback,
         timezone_region_callback,
         timezone_text_handler,
@@ -252,6 +256,7 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("health", health_command))
+    application.add_handler(CommandHandler("difficulty", difficulty_command))
 
     # Admin command handlers
     application.add_handler(CommandHandler("admin", admin_command))
@@ -296,6 +301,18 @@ def register_handlers(application) -> None:
     # Source citation expand handler
     application.add_handler(
         CallbackQueryHandler(expand_source_callback, pattern=r"^expand_source:\d+$")
+    )
+    # Difficulty selection handler
+    application.add_handler(
+        CallbackQueryHandler(difficulty_callback, pattern=r"^difficulty:\d+$")
+    )
+    # Settings menu navigation handler
+    application.add_handler(
+        CallbackQueryHandler(settings_menu_callback, pattern=r"^settings:")
+    )
+    # Subscription toggle handler
+    application.add_handler(
+        CallbackQueryHandler(subscription_callback, pattern=r"^subscription:")
     )
 
     # Text message handler for custom timezone input during onboarding

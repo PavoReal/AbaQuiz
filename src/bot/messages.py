@@ -6,7 +6,7 @@ Contains all bot message text and formatting functions.
 
 from typing import Any, Optional
 
-from src.config.constants import ACHIEVEMENTS, AchievementType, ContentArea
+from src.config.constants import ACHIEVEMENTS, DIFFICULTY_LEVELS, AchievementType, ContentArea
 
 
 def format_source_citation(
@@ -423,6 +423,7 @@ def format_help() -> str:
 
 ⚙️ *Settings*
 /settings - Manage preferences
+/difficulty - Set minimum question difficulty
 /stop - Unsubscribe from daily questions
 /start - Resubscribe
 
@@ -430,6 +431,44 @@ def format_help() -> str:
 /help - Show this message
 
 _Questions are sent daily at 8 AM and 8 PM your time._"""
+
+
+def format_difficulty_prompt(current_level: int) -> str:
+    """
+    Format the difficulty selection prompt.
+
+    Args:
+        current_level: User's current minimum difficulty level (1-5)
+    """
+    current_info = DIFFICULTY_LEVELS.get(current_level, DIFFICULTY_LEVELS[1])
+
+    lines = [
+        "📊 *Difficulty Setting*\n",
+        f"Current: {current_info['emoji']} *{current_info['name']}*\n",
+        "Choose the minimum difficulty level for your questions:\n",
+    ]
+
+    for level, info in DIFFICULTY_LEVELS.items():
+        lines.append(f"{info['emoji']} *{info['name']}*")
+        lines.append(f"   _{info['description']}_\n")
+
+    lines.append("_Higher levels show only harder questions._")
+
+    return "\n".join(lines)
+
+
+def format_difficulty_updated(new_level: int) -> str:
+    """
+    Format confirmation after difficulty change.
+
+    Args:
+        new_level: The new minimum difficulty level (1-5)
+    """
+    info = DIFFICULTY_LEVELS.get(new_level, DIFFICULTY_LEVELS[1])
+    return (
+        f"✅ Difficulty updated to {info['emoji']} *{info['name']}*\n\n"
+        f"You'll now receive questions at difficulty level {new_level} or higher."
+    )
 
 
 def format_daily_limit_reached(limit: int) -> str:

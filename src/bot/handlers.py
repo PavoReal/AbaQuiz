@@ -25,6 +25,7 @@ from src.bot.middleware import (
 from src.config.constants import (
     ACHIEVEMENTS,
     CONTENT_AREA_ALIASES,
+    DIFFICULTY_LEVELS,
     TIMEZONE_REGIONS,
     AchievementType,
     ContentArea,
@@ -478,14 +479,18 @@ async def send_question_to_user(
 
     internal_user_id = db_user["id"]
 
+    # Get user's difficulty preference (default to 1 = all questions)
+    difficulty_min = db_user.get("difficulty_min", 1) or 1
+
     # Select content area if not specified
     if not content_area:
         content_area = await select_content_area_for_user(internal_user_id, repo)
 
-    # Get unseen question
+    # Get unseen question with difficulty filter
     question = await repo.get_unseen_question_for_user(
         internal_user_id,
         content_area=content_area,
+        difficulty_min=difficulty_min,
     )
 
     # Fallback: if no question in selected content area, try any content area
@@ -493,6 +498,7 @@ async def send_question_to_user(
         question = await repo.get_unseen_question_for_user(
             internal_user_id,
             content_area=None,
+            difficulty_min=difficulty_min,
         )
 
     if not question:
@@ -1293,6 +1299,125 @@ async def noop_callback(
         await update.callback_query.answer()
 
 
+@dm_only_middleware
+@ban_check_middleware
+async def settings_menu_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle settings menu navigation callbacks."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    data = query.data or ""
+
+    if not data.startswith("settings:"):
+        return
+
+    action = data.replace("settings:", "")
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    db_user = await repo.get_user_by_telegram_id(user_id)
+    if not db_user:
+        await query.edit_message_text("Please use /start first.")
+        return
+
+    if action == "menu":
+        # Return to main settings menu
+        await query.edit_message_text(
+            "⚙️ *Settings*\n\nChoose an option:",
+            reply_markup=keyboards.build_settings_keyboard(),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    elif action == "timezone":
+        # Show timezone region selection
+        await query.edit_message_text(
+            messages.format_timezone_prompt(),
+            reply_markup=keyboards.build_timezone_region_keyboard(),
+        )
+        context.user_data["onboarding_step"] = "timezone"
+
+    elif action == "focus":
+        # Show focus areas selection
+        current_focus = []
+        if db_user.get("focus_preferences"):
+            try:
+                current_focus = json.loads(db_user["focus_preferences"])
+            except json.JSONDecodeError:
+                pass
+        context.user_data["selected_focus_areas"] = set(current_focus)
+        await query.edit_message_text(
+            messages.format_focus_areas_prompt(),
+            reply_markup=keyboards.build_focus_areas_keyboard(set(current_focus)),
+        )
+        context.user_data["onboarding_step"] = "focus_areas"
+
+    elif action == "difficulty":
+        # Show difficulty selection
+        current_difficulty = db_user.get("difficulty_min", 1) or 1
+        await query.edit_message_text(
+            messages.format_difficulty_prompt(current_difficulty),
+            reply_markup=keyboards.build_difficulty_keyboard(current_difficulty),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    elif action == "subscription":
+        # Show subscription toggle
+        is_subscribed = db_user.get("is_subscribed", True)
+        status = "subscribed to" if is_subscribed else "unsubscribed from"
+        await query.edit_message_text(
+            f"🔔 *Subscription*\n\nYou are currently {status} daily questions.",
+            reply_markup=keyboards.build_subscription_keyboard(is_subscribed),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    elif action == "close":
+        # Close the settings menu
+        await query.delete_message()
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def subscription_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle subscription toggle callback."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    data = query.data or ""
+
+    if not data.startswith("subscription:"):
+        return
+
+    action = data.replace("subscription:", "")
+    new_status = action == "on"
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    await repo.update_user(user_id, is_subscribed=new_status)
+
+    status_text = "subscribed to" if new_status else "unsubscribed from"
+    await query.edit_message_text(
+        f"✅ You are now {status_text} daily questions.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    log_user_action(logger, user_id, f"Subscription: {action}")
+
+
 # =============================================================================
 # Health Check
 # =============================================================================
@@ -1343,3 +1468,85 @@ async def health_command(
             f"`python -m src.preprocessing.run_preprocessing`",
             parse_mode=ParseMode.MARKDOWN,
         )
+
+
+# =============================================================================
+# Difficulty Handlers
+# =============================================================================
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+@ensure_user_exists
+async def difficulty_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /difficulty command - set minimum question difficulty."""
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    log_user_action(logger, user.id, "/difficulty")
+
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await update.message.reply_text("Please use /start first.")
+        return
+
+    # Get current difficulty setting (default to 1)
+    current_difficulty = db_user.get("difficulty_min", 1) or 1
+
+    await update.message.reply_text(
+        messages.format_difficulty_prompt(current_difficulty),
+        reply_markup=keyboards.build_difficulty_keyboard(current_difficulty),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+@dm_only_middleware
+@ban_check_middleware
+async def difficulty_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle difficulty level selection callback."""
+    if not update.callback_query or not update.effective_user:
+        return
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    data = query.data or ""
+
+    if not data.startswith("difficulty:"):
+        return
+
+    # Parse the selected level
+    try:
+        new_level = int(data.replace("difficulty:", ""))
+    except ValueError:
+        return
+
+    # Validate level is 1-5
+    if new_level not in DIFFICULTY_LEVELS:
+        return
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Update user's difficulty preference
+    await repo.update_user(user_id, difficulty_min=new_level)
+
+    # Show confirmation
+    await query.edit_message_text(
+        messages.format_difficulty_updated(new_level),
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    log_user_action(logger, user_id, f"Set difficulty_min={new_level}")

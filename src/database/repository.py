@@ -289,29 +289,39 @@ class Repository:
         self,
         user_id: int,
         content_area: Optional[str] = None,
+        difficulty_min: Optional[int] = None,
     ) -> Optional[dict[str, Any]]:
-        """Get a random question the user hasn't seen yet."""
+        """
+        Get a random question the user hasn't seen yet.
+
+        Args:
+            user_id: Internal user ID
+            content_area: Optional content area filter
+            difficulty_min: Optional minimum difficulty level (1-5).
+                           Questions without difficulty ratings are always included.
+        """
+        # Build query dynamically based on filters
+        conditions = [
+            "q.id NOT IN (SELECT question_id FROM sent_questions WHERE user_id = ?)"
+        ]
+        params: list[Any] = [user_id]
+
         if content_area:
-            query = """
-                SELECT q.* FROM questions q
-                WHERE q.content_area = ?
-                AND q.id NOT IN (
-                    SELECT question_id FROM sent_questions WHERE user_id = ?
-                )
-                ORDER BY RANDOM()
-                LIMIT 1
-            """
-            params = (content_area, user_id)
-        else:
-            query = """
-                SELECT q.* FROM questions q
-                WHERE q.id NOT IN (
-                    SELECT question_id FROM sent_questions WHERE user_id = ?
-                )
-                ORDER BY RANDOM()
-                LIMIT 1
-            """
-            params = (user_id,)
+            conditions.append("q.content_area = ?")
+            params.append(content_area)
+
+        if difficulty_min is not None and difficulty_min > 1:
+            # Include questions >= difficulty_min OR questions with NULL difficulty (legacy)
+            conditions.append("(q.difficulty >= ? OR q.difficulty IS NULL)")
+            params.append(difficulty_min)
+
+        where_clause = " AND ".join(conditions)
+        query = f"""
+            SELECT q.* FROM questions q
+            WHERE {where_clause}
+            ORDER BY RANDOM()
+            LIMIT 1
+        """
 
         async with self.db.execute(query, params) as cursor:
             row = await cursor.fetchone()

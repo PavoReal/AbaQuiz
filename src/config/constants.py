@@ -240,3 +240,32 @@ REGION_LABELS: dict[str, str] = {
     "europe": "🌍 Europe / Africa",
     "asia_pacific": "🌏 Asia / Pacific",
 }
+
+# Difficulty levels for question filtering
+DIFFICULTY_LEVELS: dict[int, dict[str, str]] = {
+    1: {
+        "name": "Basic Recall",
+        "emoji": "1️⃣",
+        "description": "Straightforward factual questions",
+    },
+    2: {
+        "name": "Understanding",
+        "emoji": "2️⃣",
+        "description": "Demonstrate comprehension of concepts",
+    },
+    3: {
+        "name": "Integration",
+        "emoji": "3️⃣",
+        "description": "Combine multiple concepts",
+    },
+    4: {
+        "name": "Complex Analysis",
+        "emoji": "4️⃣",
+        "description": "Analyze complex scenarios",
+    },
+    5: {
+        "name": "Evaluation/Synthesis",
+        "emoji": "5️⃣",
+        "description": "Highest-level critical thinking",
+    },
+}

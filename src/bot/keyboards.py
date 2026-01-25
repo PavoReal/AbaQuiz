@@ -8,7 +8,13 @@ from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from src.config.constants import COMMON_TIMEZONES, REGION_LABELS, TIMEZONE_REGIONS, ContentArea
+from src.config.constants import (
+    COMMON_TIMEZONES,
+    DIFFICULTY_LEVELS,
+    REGION_LABELS,
+    TIMEZONE_REGIONS,
+    ContentArea,
+)
 
 
 def build_answer_keyboard(
@@ -310,6 +316,12 @@ def build_settings_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
+                "📊 Difficulty Level",
+                callback_data="settings:difficulty",
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 "🔔 Subscription",
                 callback_data="settings:subscription",
             )
@@ -456,4 +468,37 @@ def build_source_expand_keyboard(question_id: int) -> InlineKeyboardMarkup:
             )
         ]
     ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def build_difficulty_keyboard(current_difficulty: int = 1) -> InlineKeyboardMarkup:
+    """
+    Build keyboard for difficulty level selection.
+
+    Args:
+        current_difficulty: Current minimum difficulty level (1-5)
+
+    Returns:
+        InlineKeyboardMarkup with difficulty level buttons
+    """
+    buttons = []
+
+    for level, info in DIFFICULTY_LEVELS.items():
+        # Add checkmark for current selection
+        marker = "✓ " if level == current_difficulty else ""
+        label = f"{marker}{info['emoji']} {info['name']}"
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"difficulty:{level}",
+                )
+            ]
+        )
+
+    # Add back button
+    buttons.append(
+        [InlineKeyboardButton("« Back", callback_data="settings:menu")]
+    )
+
     return InlineKeyboardMarkup(buttons)
