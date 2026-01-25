@@ -175,6 +175,8 @@ Correct Answer: B
 
 Explanation: A functional behavior assessment (FBA) should be conducted first to systematically identify the function of the behavior before selecting an intervention (Task List item F-1). While the pattern suggests escape-maintained behavior, a proper FBA will confirm this hypothesis and rule out other maintaining variables. Option A (DRA) and Option C (extinction) are intervention procedures that should only be implemented after the function is confirmed through formal assessment. Option D (physician consultation) may be appropriate for ruling out medical causes but is not the first step when the behavior appears to have a clear environmental antecedent-behavior-consequence pattern.
 
+Difficulty: 1
+
 Source Citation:
 - section: Task List F-1
 - heading: Review records and available data at the outset of the case
