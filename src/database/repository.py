@@ -1170,6 +1170,62 @@ class Repository:
             row = await cursor.fetchone()
             return row["count"] if row else 0
 
+    async def get_questions_with_null_difficulty(
+        self, limit: Optional[int] = None
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch questions where difficulty IS NULL.
+
+        Args:
+            limit: Maximum number of questions to return (None = all)
+
+        Returns:
+            List of question dicts with id, content, content_area, options, correct_answer
+        """
+        query = """
+            SELECT id, content, content_area, options, correct_answer
+            FROM questions
+            WHERE difficulty IS NULL
+            ORDER BY id
+        """
+        if limit is not None:
+            query += f" LIMIT {limit}"
+
+        async with self.db.execute(query) as cursor:
+            rows = await cursor.fetchall()
+            questions = []
+            for row in rows:
+                q = dict(row)
+                q["options"] = json.loads(q["options"])
+                questions.append(q)
+            return questions
+
+    async def bulk_update_difficulty(
+        self, updates: list[tuple[int, int]]
+    ) -> int:
+        """
+        Bulk update difficulty ratings for questions.
+
+        Args:
+            updates: List of (question_id, difficulty) tuples
+
+        Returns:
+            Number of questions updated
+        """
+        if not updates:
+            return 0
+
+        updated_count = 0
+        for question_id, difficulty in updates:
+            await self.db.execute(
+                "UPDATE questions SET difficulty = ? WHERE id = ?",
+                (difficulty, question_id),
+            )
+            updated_count += 1
+
+        await self.db.commit()
+        return updated_count
+
     # =========================================================================
     # Question Stats Operations
     # =========================================================================
