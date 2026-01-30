@@ -825,3 +825,145 @@ async def _execute_bonus_push(
         result_lines.append(f"No unseen questions: {no_questions_count}")
 
     await update.message.reply_text("\n".join(result_lines))
+
+
+# =============================================================================
+# Seasonal Event Management
+# =============================================================================
+
+
+@dm_only_middleware
+@admin_middleware
+async def create_event_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """
+    Handle /create_event command - create a seasonal event.
+
+    Usage: /create_event <name> <type> <days> [focus_area] [multiplier]
+    Example: /create_event "Ethics Week" focus_area 7 Ethics 2.0
+    """
+    if not update.effective_user or not update.message:
+        return
+
+    args = context.args or []
+    log_user_action(logger, update.effective_user.id, f"/create_event {' '.join(args)}")
+
+    if len(args) < 3:
+        await update.message.reply_text(
+            "*Create Seasonal Event*\n\n"
+            "Usage: /create\\_event <name> <type> <days> [focus\\_area] [multiplier]\n\n"
+            "Types:\n"
+            "  • `double_points` - 2x points for all questions\n"
+            "  • `focus_area` - Bonus for specific content area\n"
+            "  • `marathon` - Answer many questions\n\n"
+            "Example:\n"
+            '`/create_event "Ethics Week" focus_area 7 Ethics 2.0`',
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    from datetime import datetime, timedelta
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Parse arguments
+    event_name = args[0].strip('"\'')
+    event_type = args[1].lower()
+    try:
+        duration_days = int(args[2])
+    except ValueError:
+        await update.message.reply_text("Duration must be a number of days.")
+        return
+
+    focus_area = args[3] if len(args) > 3 else None
+    try:
+        multiplier = float(args[4]) if len(args) > 4 else 1.0
+    except ValueError:
+        multiplier = 1.0
+
+    # Create event
+    start_date = datetime.now()
+    end_date = start_date + timedelta(days=duration_days)
+
+    event_id = await repo.create_seasonal_event(
+        event_name=event_name,
+        event_type=event_type,
+        start_date=start_date,
+        end_date=end_date,
+        description=f"Seasonal event: {event_name}",
+        focus_area=focus_area,
+        bonus_multiplier=multiplier,
+        created_by=update.effective_user.id,
+    )
+
+    await update.message.reply_text(
+        f"*Event Created!*\n\n"
+        f"ID: {event_id}\n"
+        f"Name: {event_name}\n"
+        f"Type: {event_type}\n"
+        f"Duration: {duration_days} days\n"
+        f"Focus Area: {focus_area or 'All'}\n"
+        f"Multiplier: {multiplier}x\n\n"
+        f"Event is now active!",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+@dm_only_middleware
+@admin_middleware
+async def end_event_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """
+    Handle /end_event command - end a seasonal event early.
+
+    Usage: /end_event <event_id>
+    """
+    if not update.effective_user or not update.message:
+        return
+
+    args = context.args or []
+    log_user_action(logger, update.effective_user.id, f"/end_event {' '.join(args)}")
+
+    if not args:
+        # Show active events
+        settings = get_settings()
+        repo = await get_repository(settings.database_path)
+        events = await repo.get_active_events()
+
+        if not events:
+            await update.message.reply_text("No active events.")
+            return
+
+        lines = ["*Active Events*\n"]
+        for event in events:
+            lines.append(
+                f"ID {event['id']}: {event['event_name']} ({event['event_type']})"
+            )
+
+        lines.append("\nUsage: `/end_event <id>`")
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+        return
+
+    try:
+        event_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("Event ID must be a number.")
+        return
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    event = await repo.get_event_by_id(event_id)
+    if not event:
+        await update.message.reply_text(f"Event {event_id} not found.")
+        return
+
+    await repo.end_event(event_id)
+    await update.message.reply_text(
+        f"Event '{event['event_name']}' (ID: {event_id}) has been ended."
+    )

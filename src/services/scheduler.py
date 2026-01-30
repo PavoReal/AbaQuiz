@@ -285,6 +285,74 @@ def get_unique_timezones() -> list[str]:
     return [tz for tz, _ in COMMON_TIMEZONES]
 
 
+async def generate_weekly_challenges() -> None:
+    """
+    Generate new weekly challenges at the start of each week.
+
+    Runs every Monday at midnight (Pacific) to create 3 challenges for the week.
+    """
+    from datetime import date, timedelta
+    import random
+
+    from src.config.constants import CHALLENGE_TEMPLATES, ChallengeType, ContentArea
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    # Get Monday of current week
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+
+    logger.info(f"Generating weekly challenges for week starting {week_start}")
+
+    # Check if challenges already exist for this week
+    existing = await repo.get_current_week_challenges()
+    if existing:
+        logger.info(f"Challenges already exist for week {week_start}, skipping generation")
+        return
+
+    # Select 3 random challenge templates
+    templates = random.sample(CHALLENGE_TEMPLATES, min(3, len(CHALLENGE_TEMPLATES)))
+
+    challenges_created = 0
+    for template in templates:
+        challenge_type = template["type"]
+        targets = template["targets"]
+        bonuses = template["bonus_points"]
+
+        # Pick a random difficulty level
+        difficulty = random.randint(0, len(targets) - 1)
+        target = targets[difficulty]
+        bonus = bonuses[difficulty]
+
+        # Handle area-specific challenges
+        target_area = None
+        description = template["description_template"]
+        if template.get("requires_area"):
+            # Pick a random content area
+            areas = list(ContentArea)
+            target_area = random.choice(areas).value
+            description = description.format(target=target, area=target_area)
+        else:
+            description = description.format(target=target)
+
+        # Create the challenge
+        challenge_id = await repo.create_weekly_challenge(
+            week_start=week_start,
+            challenge_type=challenge_type.value,
+            target_value=target,
+            bonus_points=bonus,
+            description=description,
+            target_area=target_area,
+        )
+
+        if challenge_id:
+            challenges_created += 1
+            logger.info(f"Created challenge: {description} (target={target}, bonus={bonus})")
+
+    logger.info(f"Generated {challenges_created} weekly challenges for week {week_start}")
+
+
 async def start_scheduler(application: Application) -> AsyncIOScheduler:
     """
     Initialize and start the APScheduler.
@@ -294,6 +362,7 @@ async def start_scheduler(application: Application) -> AsyncIOScheduler:
     - Evening delivery (8 PM) for each user timezone
     - Daily limit reset (midnight) for each user timezone
     - Pool maintenance (3 AM Pacific)
+    - Weekly challenge generation (Monday 12:01 AM Pacific)
 
     Args:
         application: Telegram bot application
@@ -376,6 +445,20 @@ async def start_scheduler(application: Application) -> AsyncIOScheduler:
         CronTrigger(minute="*/5"),
         id="notification_batch_flush",
         name="Flush notification batches",
+        replace_existing=True,
+    )
+
+    # Weekly challenge generation - Monday at 12:01 AM Pacific
+    _scheduler.add_job(
+        generate_weekly_challenges,
+        CronTrigger(
+            day_of_week="mon",
+            hour=0,
+            minute=1,
+            timezone="America/Los_Angeles",
+        ),
+        id="weekly_challenges",
+        name="Generate weekly challenges",
         replace_existing=True,
     )
 

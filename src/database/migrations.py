@@ -12,13 +12,20 @@ from src.database.models import (
     CREATE_ADMINS_TABLE,
     CREATE_ADMIN_NOTIFICATION_SETTINGS_TABLE,
     CREATE_BROADCAST_QUEUE_TABLE,
+    CREATE_COMEBACK_BONUSES_TABLE,
+    CREATE_CONTENT_MASTERY_TABLE,
     CREATE_GENERATION_PROGRESS_TABLE,
     CREATE_GENERATION_QUEUE_TABLE,
     CREATE_INDEXES,
+    CREATE_LEADERBOARD_SNAPSHOTS_TABLE,
     CREATE_NOTIFICATION_LOG_TABLE,
     CREATE_QUESTION_REPORTS_TABLE,
     CREATE_QUESTION_STATS_TABLE,
     CREATE_QUESTION_REVIEWS_TABLE,
+    CREATE_SEASONAL_EVENTS_TABLE,
+    CREATE_USER_EVENT_PROGRESS_TABLE,
+    CREATE_USER_WEEKLY_PROGRESS_TABLE,
+    CREATE_WEEKLY_CHALLENGES_TABLE,
 )
 
 logger = get_logger(__name__)
@@ -105,6 +112,11 @@ async def run_migrations(db_path: str) -> None:
         if current_version < 6:
             await migrate_to_v6(db)
             await set_schema_version(db, 6)
+
+        # Migration v7: Gamification system overhaul
+        if current_version < 7:
+            await migrate_to_v7(db)
+            await set_schema_version(db, 7)
 
         await db.commit()
 
@@ -408,3 +420,240 @@ async def migrate_to_v6(db: aiosqlite.Connection) -> None:
         logger.info("Column 'difficulty_min' already exists in users table")
 
     logger.info("Migration v6 complete")
+
+
+async def migrate_to_v7(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 7.
+
+    Gamification system overhaul:
+    - New columns: user_stats.peak_streak, user_stats.challenges_completed, user_stats.comebacks
+    - New columns: users.leaderboard_opted_in, users.display_name
+    - New columns: achievements.tier, achievements.progress
+    - New tables: content_mastery, weekly_challenges, user_weekly_progress,
+                  comeback_bonuses, seasonal_events, user_event_progress, leaderboard_snapshots
+    - Backfill content_mastery from existing user_answers data
+    - Migrate old achievements to new tiered system
+    """
+    logger.info("Running migration v7: Gamification system overhaul")
+
+    # =========================================================================
+    # Add new columns to user_stats
+    # =========================================================================
+    async with db.execute("PRAGMA table_info(user_stats)") as cursor:
+        columns = await cursor.fetchall()
+        stats_columns = [col[1] for col in columns]
+
+    if "peak_streak" not in stats_columns:
+        await db.execute("ALTER TABLE user_stats ADD COLUMN peak_streak INTEGER DEFAULT 0")
+        # Backfill peak_streak from longest_streak
+        await db.execute("UPDATE user_stats SET peak_streak = longest_streak")
+        logger.info("Added 'peak_streak' column to user_stats table")
+
+    if "challenges_completed" not in stats_columns:
+        await db.execute(
+            "ALTER TABLE user_stats ADD COLUMN challenges_completed INTEGER DEFAULT 0"
+        )
+        logger.info("Added 'challenges_completed' column to user_stats table")
+
+    if "comebacks" not in stats_columns:
+        await db.execute("ALTER TABLE user_stats ADD COLUMN comebacks INTEGER DEFAULT 0")
+        logger.info("Added 'comebacks' column to user_stats table")
+
+    # =========================================================================
+    # Add new columns to users
+    # =========================================================================
+    async with db.execute("PRAGMA table_info(users)") as cursor:
+        columns = await cursor.fetchall()
+        users_columns = [col[1] for col in columns]
+
+    if "leaderboard_opted_in" not in users_columns:
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN leaderboard_opted_in BOOLEAN DEFAULT 0"
+        )
+        logger.info("Added 'leaderboard_opted_in' column to users table")
+
+    if "display_name" not in users_columns:
+        await db.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+        logger.info("Added 'display_name' column to users table")
+
+    # =========================================================================
+    # Add new columns to achievements
+    # =========================================================================
+    async with db.execute("PRAGMA table_info(achievements)") as cursor:
+        columns = await cursor.fetchall()
+        achievement_columns = [col[1] for col in columns]
+
+    if "tier" not in achievement_columns:
+        await db.execute(
+            "ALTER TABLE achievements ADD COLUMN tier TEXT DEFAULT 'bronze'"
+        )
+        logger.info("Added 'tier' column to achievements table")
+
+    if "progress" not in achievement_columns:
+        await db.execute("ALTER TABLE achievements ADD COLUMN progress INTEGER DEFAULT 0")
+        logger.info("Added 'progress' column to achievements table")
+
+    # =========================================================================
+    # Create new gamification tables
+    # =========================================================================
+    await db.execute(CREATE_CONTENT_MASTERY_TABLE)
+    logger.info("Created content_mastery table")
+
+    await db.execute(CREATE_WEEKLY_CHALLENGES_TABLE)
+    logger.info("Created weekly_challenges table")
+
+    await db.execute(CREATE_USER_WEEKLY_PROGRESS_TABLE)
+    logger.info("Created user_weekly_progress table")
+
+    await db.execute(CREATE_COMEBACK_BONUSES_TABLE)
+    logger.info("Created comeback_bonuses table")
+
+    await db.execute(CREATE_SEASONAL_EVENTS_TABLE)
+    logger.info("Created seasonal_events table")
+
+    await db.execute(CREATE_USER_EVENT_PROGRESS_TABLE)
+    logger.info("Created user_event_progress table")
+
+    await db.execute(CREATE_LEADERBOARD_SNAPSHOTS_TABLE)
+    logger.info("Created leaderboard_snapshots table")
+
+    # =========================================================================
+    # Create indexes for new tables
+    # =========================================================================
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_content_mastery_user_id ON content_mastery(user_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_content_mastery_area ON content_mastery(content_area)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_weekly_challenges_week ON weekly_challenges(week_start)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_weekly_progress_user_id "
+        "ON user_weekly_progress(user_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_weekly_progress_challenge "
+        "ON user_weekly_progress(challenge_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_comeback_bonuses_user_id ON comeback_bonuses(user_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_comeback_bonuses_expires ON comeback_bonuses(expires_at)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_seasonal_events_dates "
+        "ON seasonal_events(start_date, end_date)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_event_progress_user_id "
+        "ON user_event_progress(user_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_event_progress_event "
+        "ON user_event_progress(event_id)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_period "
+        "ON leaderboard_snapshots(period_type, period_start)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_user "
+        "ON leaderboard_snapshots(user_id)"
+    )
+    logger.info("Created indexes for gamification tables")
+
+    # =========================================================================
+    # Backfill content_mastery from existing user_answers data
+    # =========================================================================
+    await db.execute("""
+        INSERT OR IGNORE INTO content_mastery (user_id, content_area, questions_answered, correct_answers, current_accuracy)
+        SELECT
+            ua.user_id,
+            q.content_area,
+            COUNT(*) as questions_answered,
+            SUM(CASE WHEN ua.is_correct = 1 THEN 1 ELSE 0 END) as correct_answers,
+            CAST(SUM(CASE WHEN ua.is_correct = 1 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) as current_accuracy
+        FROM user_answers ua
+        JOIN questions q ON ua.question_id = q.id
+        GROUP BY ua.user_id, q.content_area
+    """)
+
+    # Calculate and set mastery levels based on requirements:
+    # BEGINNER (1): 10+ questions, 60%+ accuracy
+    # INTERMEDIATE (2): 30+ questions, 75%+ accuracy
+    # MASTER (3): 50+ questions, 85%+ accuracy
+    await db.execute("""
+        UPDATE content_mastery SET mastery_level = CASE
+            WHEN questions_answered >= 50 AND current_accuracy >= 0.85 THEN 3
+            WHEN questions_answered >= 30 AND current_accuracy >= 0.75 THEN 2
+            WHEN questions_answered >= 10 AND current_accuracy >= 0.60 THEN 1
+            ELSE 0
+        END
+    """)
+
+    async with db.execute("SELECT COUNT(*) FROM content_mastery") as cursor:
+        row = await cursor.fetchone()
+        mastery_count = row[0] if row else 0
+
+    logger.info(f"Backfilled content_mastery for {mastery_count} user/area combinations")
+
+    # =========================================================================
+    # Migrate old achievements to new tiered system
+    # =========================================================================
+    # Map old achievement types to new tiered types with appropriate tier
+    achievement_mappings = [
+        # Old type, new type, new tier
+        ("first_steps", "scholar", "bronze"),
+        ("century_club", "scholar", "silver"),
+        ("knowledge_seeker", "scholar", "gold"),
+        ("week_warrior", "consistent", "bronze"),
+        ("monthly_master", "consistent", "silver"),
+        ("streak_legend", "consistent", "gold"),
+    ]
+
+    for old_type, new_type, tier in achievement_mappings:
+        await db.execute("""
+            UPDATE achievements
+            SET achievement_type = ?, tier = ?
+            WHERE achievement_type = ?
+        """, (new_type, tier, old_type))
+
+    # Set progress to max for migrated achievements (they're complete)
+    # Scholar: bronze=25, silver=100, gold=500
+    await db.execute("""
+        UPDATE achievements SET progress = 25 WHERE achievement_type = 'scholar' AND tier = 'bronze'
+    """)
+    await db.execute("""
+        UPDATE achievements SET progress = 100 WHERE achievement_type = 'scholar' AND tier = 'silver'
+    """)
+    await db.execute("""
+        UPDATE achievements SET progress = 500 WHERE achievement_type = 'scholar' AND tier = 'gold'
+    """)
+
+    # Consistent: bronze=7, silver=30, gold=100
+    await db.execute("""
+        UPDATE achievements SET progress = 7 WHERE achievement_type = 'consistent' AND tier = 'bronze'
+    """)
+    await db.execute("""
+        UPDATE achievements SET progress = 30 WHERE achievement_type = 'consistent' AND tier = 'silver'
+    """)
+    await db.execute("""
+        UPDATE achievements SET progress = 100 WHERE achievement_type = 'consistent' AND tier = 'gold'
+    """)
+
+    # Remove old content mastery achievements that don't map to new system
+    # (ethics_expert, assessment_ace, procedures_pro, foundations_master, design_specialist, perfect_week)
+    await db.execute("""
+        DELETE FROM achievements WHERE achievement_type IN (
+            'ethics_expert', 'assessment_ace', 'procedures_pro',
+            'foundations_master', 'design_specialist', 'perfect_week'
+        )
+    """)
+
+    logger.info("Migrated old achievements to new tiered system")
+
+    logger.info("Migration v7 complete")

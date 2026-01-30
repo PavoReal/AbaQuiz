@@ -256,6 +256,119 @@ CREATE TABLE IF NOT EXISTS generation_progress (
 )
 """
 
+# =============================================================================
+# GAMIFICATION SYSTEM v2 TABLES
+# =============================================================================
+
+# Content mastery tracking per content area per user
+CREATE_CONTENT_MASTERY_TABLE = """
+CREATE TABLE IF NOT EXISTS content_mastery (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    content_area TEXT NOT NULL,
+    mastery_level INTEGER DEFAULT 0,
+    questions_answered INTEGER DEFAULT 0,
+    correct_answers INTEGER DEFAULT 0,
+    current_accuracy REAL DEFAULT 0.0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(user_id, content_area)
+)
+"""
+
+# Weekly challenges - generated each week
+CREATE_WEEKLY_CHALLENGES_TABLE = """
+CREATE TABLE IF NOT EXISTS weekly_challenges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start DATE NOT NULL,
+    challenge_type TEXT NOT NULL,
+    target_value INTEGER NOT NULL,
+    target_area TEXT,
+    bonus_points INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(week_start, challenge_type, target_area)
+)
+"""
+
+# User progress on weekly challenges
+CREATE_USER_WEEKLY_PROGRESS_TABLE = """
+CREATE TABLE IF NOT EXISTS user_weekly_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    challenge_id INTEGER NOT NULL,
+    current_value INTEGER DEFAULT 0,
+    completed BOOLEAN DEFAULT 0,
+    completed_at TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (challenge_id) REFERENCES weekly_challenges(id) ON DELETE CASCADE,
+    UNIQUE(user_id, challenge_id)
+)
+"""
+
+# Comeback bonuses for returning users
+CREATE_COMEBACK_BONUSES_TABLE = """
+CREATE TABLE IF NOT EXISTS comeback_bonuses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    days_inactive INTEGER NOT NULL,
+    bonus_type TEXT NOT NULL,
+    bonus_value INTEGER NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    claimed BOOLEAN DEFAULT 0,
+    claimed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)
+"""
+
+# Seasonal events
+CREATE_SEASONAL_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS seasonal_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_name TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    start_date TIMESTAMP NOT NULL,
+    end_date TIMESTAMP NOT NULL,
+    focus_area TEXT,
+    bonus_multiplier REAL DEFAULT 1.0,
+    description TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+# User progress in seasonal events
+CREATE_USER_EVENT_PROGRESS_TABLE = """
+CREATE TABLE IF NOT EXISTS user_event_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    questions_answered INTEGER DEFAULT 0,
+    correct_answers INTEGER DEFAULT 0,
+    points_earned INTEGER DEFAULT 0,
+    badge_earned TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (event_id) REFERENCES seasonal_events(id) ON DELETE CASCADE,
+    UNIQUE(user_id, event_id)
+)
+"""
+
+# Leaderboard snapshots for different periods
+CREATE_LEADERBOARD_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_type TEXT NOT NULL,
+    period_start DATE NOT NULL,
+    user_id INTEGER NOT NULL,
+    rank INTEGER NOT NULL,
+    score INTEGER NOT NULL,
+    display_name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)
+"""
+
 # Indexes for performance
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
@@ -277,6 +390,19 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_notification_log_event_type ON notification_log(event_type)",
     "CREATE INDEX IF NOT EXISTS idx_notification_log_created_at ON notification_log(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_notification_log_summary ON notification_log(included_in_summary_at)",
+    # Gamification v2 indexes
+    "CREATE INDEX IF NOT EXISTS idx_content_mastery_user_id ON content_mastery(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_content_mastery_area ON content_mastery(content_area)",
+    "CREATE INDEX IF NOT EXISTS idx_weekly_challenges_week ON weekly_challenges(week_start)",
+    "CREATE INDEX IF NOT EXISTS idx_user_weekly_progress_user_id ON user_weekly_progress(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_user_weekly_progress_challenge ON user_weekly_progress(challenge_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comeback_bonuses_user_id ON comeback_bonuses(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_comeback_bonuses_expires ON comeback_bonuses(expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_seasonal_events_dates ON seasonal_events(start_date, end_date)",
+    "CREATE INDEX IF NOT EXISTS idx_user_event_progress_user_id ON user_event_progress(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_user_event_progress_event ON user_event_progress(event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_period ON leaderboard_snapshots(period_type, period_start)",
+    "CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_user ON leaderboard_snapshots(user_id)",
 ]
 
 # All table creation statements in order
@@ -299,4 +425,12 @@ ALL_TABLES = [
     CREATE_BROADCAST_QUEUE_TABLE,
     CREATE_GENERATION_QUEUE_TABLE,
     CREATE_GENERATION_PROGRESS_TABLE,
+    # Gamification v2 tables
+    CREATE_CONTENT_MASTERY_TABLE,
+    CREATE_WEEKLY_CHALLENGES_TABLE,
+    CREATE_USER_WEEKLY_PROGRESS_TABLE,
+    CREATE_COMEBACK_BONUSES_TABLE,
+    CREATE_SEASONAL_EVENTS_TABLE,
+    CREATE_USER_EVENT_PROGRESS_TABLE,
+    CREATE_LEADERBOARD_SNAPSHOTS_TABLE,
 ]

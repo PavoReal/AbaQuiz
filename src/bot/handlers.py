@@ -24,12 +24,17 @@ from src.bot.middleware import (
 )
 from src.config.constants import (
     ACHIEVEMENTS,
+    ACHIEVEMENT_TIER_INFO,
     CONTENT_AREA_ALIASES,
     DIFFICULTY_LEVELS,
+    TIERED_ACHIEVEMENTS,
     TIMEZONE_REGIONS,
+    AchievementTier,
     AchievementType,
     ContentArea,
+    MasteryLevel,
     Points,
+    TieredAchievementType,
 )
 from src.config.logging import get_logger, log_user_action
 from src.config.settings import get_settings
@@ -683,9 +688,21 @@ async def answer_callback(
         response_time_ms=response_time_ms,
     )
 
-    # Update streak
+    # Update streak with gradual decay
     today = date.today()
-    new_streak, streak_increased = await repo.update_streak(internal_user_id, today)
+    new_streak, streak_change, is_comeback = await repo.update_streak_with_decay(
+        internal_user_id, today
+    )
+
+    # Check and claim comeback bonus if returning after absence
+    comeback_bonus_claimed = 0
+    if is_comeback:
+        # Check for existing unclaimed bonus
+        bonus = await repo.get_unclaimed_comeback_bonus(internal_user_id)
+        if bonus:
+            comeback_bonus_claimed = await repo.claim_comeback_bonus(
+                internal_user_id, bonus["id"]
+            )
 
     # Calculate points
     points = 0
@@ -704,8 +721,17 @@ async def answer_callback(
 
         await repo.add_points(internal_user_id, points)
 
-    # Check for new achievements
-    new_achievement = await check_achievements(internal_user_id, repo)
+    # Update content mastery
+    content_area = question.get("content_area", "")
+    new_mastery_level = await repo.update_content_mastery(
+        internal_user_id, content_area, is_correct
+    )
+
+    # Update weekly challenge progress
+    await update_weekly_challenge_progress(internal_user_id, content_area, is_correct, repo)
+
+    # Check for new tiered achievements
+    new_tiered_achievement = await check_tiered_achievements(internal_user_id, repo)
 
     # Get source citation if available
     source_citation = question.get("source_citation")
@@ -716,14 +742,16 @@ async def answer_callback(
             explanation=question["explanation"],
             points_earned=points,
             streak=new_streak,
-            new_achievement=new_achievement,
+            new_tiered_achievement=new_tiered_achievement,
+            new_mastery_level=(new_mastery_level, content_area) if new_mastery_level else None,
+            comeback_bonus=comeback_bonus_claimed,
             source_citation=source_citation,
         )
     else:
         response, has_expand = messages.format_incorrect_answer(
             correct_answer=question["correct_answer"],
             explanation=question["explanation"],
-            streak_broken=not streak_increased and new_streak == 1,
+            streak_decayed=streak_change if streak_change < 0 else 0,
             source_citation=source_citation,
         )
 
@@ -1085,6 +1113,118 @@ async def check_achievements(
     return new_achievement
 
 
+async def update_weekly_challenge_progress(
+    user_id: int,
+    content_area: str,
+    is_correct: bool,
+    repo,
+) -> None:
+    """
+    Update user's progress on weekly challenges after answering a question.
+
+    Args:
+        user_id: Internal user ID
+        content_area: Content area of the question
+        is_correct: Whether the answer was correct
+        repo: Repository instance
+    """
+    from src.config.constants import ChallengeType
+
+    challenges = await repo.get_current_week_challenges()
+    if not challenges:
+        return
+
+    for challenge in challenges:
+        challenge_id = challenge["id"]
+        challenge_type = challenge.get("challenge_type", "")
+        target_area = challenge.get("target_area")
+
+        # Determine if this answer contributes to the challenge
+        should_increment = False
+
+        if challenge_type == ChallengeType.QUESTIONS_ANSWERED.value:
+            # Any question counts
+            should_increment = True
+        elif challenge_type == ChallengeType.CORRECT_ANSWERS.value:
+            # Only correct answers count
+            should_increment = is_correct
+        elif challenge_type == ChallengeType.AREA_FOCUS.value:
+            # Only questions in the target area count
+            should_increment = target_area and content_area == target_area
+
+        if should_increment:
+            completed = await repo.update_weekly_progress(user_id, challenge_id, 1)
+            if completed:
+                # Award bonus points
+                bonus = challenge.get("bonus_points", 0)
+                if bonus > 0:
+                    await repo.add_points(user_id, bonus)
+
+
+async def check_tiered_achievements(
+    user_id: int,
+    repo,
+) -> Optional[tuple[TieredAchievementType, AchievementTier]]:
+    """
+    Check and award any newly earned tiered achievements.
+
+    Returns the first newly unlocked (achievement_type, tier) tuple, if any.
+    """
+    stats = await repo.get_user_stats(user_id)
+    if not stats:
+        return None
+
+    total_answered = await repo.get_total_questions_answered(user_id)
+    peak_streak = stats.get("peak_streak", stats.get("longest_streak", 0))
+    overall_accuracy = await repo.get_overall_accuracy(user_id)
+    mastered_count = await repo.get_mastered_areas_count(user_id)
+    challenges_completed = stats.get("challenges_completed", 0)
+    comebacks = stats.get("comebacks", 0)
+
+    new_achievement = None
+
+    # Check each tiered achievement type
+    achievement_checks = [
+        # (TieredAchievementType, metric_value, metric_name)
+        (TieredAchievementType.SCHOLAR, total_answered, "questions_answered"),
+        (TieredAchievementType.CONSISTENT, peak_streak, "peak_streak"),
+        (TieredAchievementType.SPECIALIST, mastered_count, "mastered_areas"),
+        (TieredAchievementType.CHALLENGER, challenges_completed, "challenges_completed"),
+        (TieredAchievementType.RESILIENT, comebacks, "comebacks"),
+    ]
+
+    for ach_type, metric_value, metric_name in achievement_checks:
+        ach_def = TIERED_ACHIEVEMENTS[ach_type]
+
+        # Check tiers in order: Bronze, Silver, Gold
+        for tier in [AchievementTier.BRONZE, AchievementTier.SILVER, AchievementTier.GOLD]:
+            tier_req = ach_def["tiers"][tier]
+            threshold = tier_req.get("count", 0)
+
+            if metric_value >= threshold:
+                # Try to grant this tier
+                if await repo.grant_tiered_achievement(user_id, ach_type, tier, metric_value):
+                    new_achievement = new_achievement or (ach_type, tier)
+
+    # Special case: Precision (accuracy-based with minimum questions)
+    precision_def = TIERED_ACHIEVEMENTS[TieredAchievementType.PRECISION]
+    min_q = precision_def.get("min_questions", 50)
+
+    if total_answered >= min_q:
+        for tier in [AchievementTier.BRONZE, AchievementTier.SILVER, AchievementTier.GOLD]:
+            tier_req = precision_def["tiers"][tier]
+            threshold = tier_req.get("accuracy", 0)
+
+            if overall_accuracy >= threshold:
+                progress = int(overall_accuracy * 100)
+                if await repo.grant_tiered_achievement(
+                    user_id, TieredAchievementType.PRECISION, tier, progress
+                ):
+                    new_achievement = new_achievement or (TieredAchievementType.PRECISION, tier)
+
+    return new_achievement
+
+
 # =============================================================================
 # Stats Commands
 # =============================================================================
@@ -1120,6 +1260,7 @@ async def stats_command(
     total_answered = await repo.get_total_questions_answered(internal_user_id)
     overall_accuracy = await repo.get_overall_accuracy(internal_user_id)
     area_stats = await repo.get_user_accuracy_by_area(internal_user_id)
+    mastered_count = await repo.get_mastered_areas_count(internal_user_id)
 
     response = messages.format_stats(
         total_answered=total_answered,
@@ -1128,6 +1269,9 @@ async def stats_command(
         longest_streak=user_stats.get("longest_streak", 0) if user_stats else 0,
         total_points=user_stats.get("total_points", 0) if user_stats else 0,
         area_stats=area_stats,
+        peak_streak=user_stats.get("peak_streak", 0) if user_stats else 0,
+        challenges_completed=user_stats.get("challenges_completed", 0) if user_stats else 0,
+        mastered_areas=mastered_count,
     )
 
     await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
@@ -1162,6 +1306,153 @@ async def streak_command(
         current=user_stats.get("current_streak", 0) if user_stats else 0,
         longest=user_stats.get("longest_streak", 0) if user_stats else 0,
     )
+
+    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+@ensure_user_exists
+async def mastery_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /mastery command - show content mastery progress."""
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    log_user_action(logger, user.id, "/mastery")
+
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await update.message.reply_text("Please use /start first.")
+        return
+
+    internal_user_id = db_user["id"]
+
+    # Get mastery data for all content areas
+    mastery_data = await repo.get_all_content_mastery(internal_user_id)
+
+    response = messages.format_mastery_progress(mastery_data)
+
+    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+@ensure_user_exists
+async def challenges_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /challenges command - show weekly challenges and progress."""
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    log_user_action(logger, user.id, "/challenges")
+
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await update.message.reply_text("Please use /start first.")
+        return
+
+    internal_user_id = db_user["id"]
+
+    # Get challenges with user progress
+    challenges = await repo.get_user_weekly_progress(internal_user_id)
+
+    response = messages.format_weekly_challenges(challenges)
+
+    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+@ensure_user_exists
+async def leaderboard_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /leaderboard command - show weekly leaderboard."""
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    log_user_action(logger, user.id, "/leaderboard")
+
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await update.message.reply_text("Please use /start first.")
+        return
+
+    internal_user_id = db_user["id"]
+
+    # Get weekly leaderboard
+    entries = await repo.get_weekly_leaderboard(limit=10)
+
+    # Get user's rank if they're opted in
+    user_rank = None
+    if await repo.get_leaderboard_opt_in(internal_user_id):
+        user_rank = await repo.get_user_rank(internal_user_id, weekly=True)
+
+    response = messages.format_leaderboard(entries, user_rank, is_weekly=True)
+
+    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+
+@dm_only_middleware
+@ban_check_middleware
+@rate_limit_middleware()
+@ensure_user_exists
+async def leaderboard_opt_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle /leaderboard_opt command - toggle leaderboard participation."""
+    if not update.effective_user or not update.message:
+        return
+
+    user = update.effective_user
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    log_user_action(logger, user.id, "/leaderboard_opt")
+
+    db_user = await repo.get_user_by_telegram_id(user.id)
+    if not db_user:
+        await update.message.reply_text("Please use /start first.")
+        return
+
+    internal_user_id = db_user["id"]
+
+    # Toggle opt-in status
+    current_status = await repo.get_leaderboard_opt_in(internal_user_id)
+    new_status = not current_status
+
+    await repo.set_leaderboard_opt_in(internal_user_id, new_status)
+
+    # Generate display name if opting in and doesn't have one
+    display_name = None
+    if new_status:
+        display_name = await repo.get_display_name(internal_user_id)
+        if not display_name:
+            display_name = await repo.generate_display_name(internal_user_id)
+
+    response = messages.format_leaderboard_opt_status(new_status, display_name)
 
     await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
 

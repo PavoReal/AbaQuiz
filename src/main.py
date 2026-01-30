@@ -209,6 +209,8 @@ def register_handlers(application) -> None:
         ban_command,
         bonus_command,
         broadcast_command,
+        create_event_command,
+        end_event_command,
         notify_command,
         scheduler_command,
         unban_command,
@@ -226,6 +228,10 @@ def register_handlers(application) -> None:
         focus_callback,
         health_command,
         help_command,
+        challenges_command,
+        leaderboard_command,
+        leaderboard_opt_command,
+        mastery_command,
         noop_callback,
         quiz_area_callback,
         quiz_command,
@@ -250,6 +256,10 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("daily", daily_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("streak", streak_command))
+    application.add_handler(CommandHandler("mastery", mastery_command))
+    application.add_handler(CommandHandler("challenges", challenges_command))
+    application.add_handler(CommandHandler("leaderboard", leaderboard_command))
+    application.add_handler(CommandHandler("leaderboard_opt", leaderboard_opt_command))
     application.add_handler(CommandHandler("achievements", achievements_command))
     application.add_handler(CommandHandler("areas", areas_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -268,6 +278,8 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("usage", usage_command))
     application.add_handler(CommandHandler("notify", notify_command))
     application.add_handler(CommandHandler("scheduler", scheduler_command))
+    application.add_handler(CommandHandler("create_event", create_event_command))
+    application.add_handler(CommandHandler("end_event", end_event_command))
 
     # Callback query handlers
     application.add_handler(

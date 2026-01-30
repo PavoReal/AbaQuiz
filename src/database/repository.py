@@ -10,7 +10,12 @@ from typing import Any, Optional
 
 import aiosqlite
 
-from src.config.constants import AchievementType, ContentArea
+from src.config.constants import (
+    AchievementTier,
+    AchievementType,
+    ContentArea,
+    TieredAchievementType,
+)
 from src.config.logging import get_logger
 
 logger = get_logger(__name__)
@@ -745,6 +750,95 @@ class Repository:
 
         return (new_streak, streak_increased)
 
+    async def update_streak_with_decay(
+        self,
+        user_id: int,
+        answer_date: date,
+    ) -> tuple[int, int, bool]:
+        """
+        Update user streak with gradual decay instead of instant reset.
+
+        Decay rules:
+        - Same day: No change
+        - Next day: Streak +1
+        - 1 day missed (grace period): No decay
+        - 2+ days missed: Decay by (missed_days - 1), capped at 7
+        - Streak never drops below 1 when answering
+
+        Returns:
+            Tuple of (new_streak, streak_change, is_comeback)
+            - new_streak: The updated streak value
+            - streak_change: Positive for increase, negative for decay, 0 for same day
+            - is_comeback: True if this is a return after 7+ days absence
+        """
+        from src.config.constants import STREAK_DECAY_CONFIG
+
+        stats = await self.get_user_stats(user_id)
+        if not stats:
+            return (1, 1, False)
+
+        last_answer = stats["last_answer_date"]
+        current_streak = stats["current_streak"]
+        longest_streak = stats["longest_streak"]
+        peak_streak = stats.get("peak_streak", longest_streak)
+
+        is_comeback = False
+
+        if last_answer is None:
+            # First ever answer
+            new_streak = 1
+            streak_change = 1
+        else:
+            if isinstance(last_answer, str):
+                last_answer = date.fromisoformat(last_answer)
+
+            days_diff = (answer_date - last_answer).days
+
+            if days_diff == 0:
+                # Same day, no change
+                new_streak = current_streak
+                streak_change = 0
+            elif days_diff == 1:
+                # Consecutive day - streak increases
+                new_streak = current_streak + 1
+                streak_change = 1
+            elif days_diff == 2:
+                # One day missed - grace period, no decay, streak +1
+                new_streak = current_streak + 1
+                streak_change = 1
+            else:
+                # Multiple days missed - apply decay
+                grace = STREAK_DECAY_CONFIG["grace_period_days"]
+                decay_rate = STREAK_DECAY_CONFIG["decay_rate_per_day"]
+                max_decay = STREAK_DECAY_CONFIG["max_decay_per_period"]
+
+                # Calculate decay: (days_missed - grace_period) * decay_rate
+                missed_days = days_diff - 1  # -1 because today doesn't count as missed
+                decay = min((missed_days - grace) * decay_rate, max_decay)
+
+                # Apply decay but never go below 1 when answering
+                new_streak = max(1, current_streak - decay)
+                streak_change = new_streak - current_streak
+
+                # Check if this qualifies as a comeback (7+ days inactive)
+                if missed_days >= 7:
+                    is_comeback = True
+                    # Create comeback bonus
+                    await self.check_and_create_comeback_bonus(user_id, missed_days)
+
+        # Update peak_streak if current exceeds it
+        new_peak = max(peak_streak, new_streak)
+
+        await self.update_user_stats(
+            user_id,
+            current_streak=new_streak,
+            longest_streak=max(longest_streak, new_streak),
+            peak_streak=new_peak,
+            last_answer_date=answer_date.isoformat(),
+        )
+
+        return (new_streak, streak_change, is_comeback)
+
     async def get_total_questions_answered(self, user_id: int) -> int:
         """Get total questions answered by user."""
         async with self.db.execute(
@@ -824,6 +918,800 @@ class Repository:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    # =========================================================================
+    # Content Mastery Operations
+    # =========================================================================
+
+    async def get_content_mastery(
+        self, user_id: int, content_area: str
+    ) -> Optional[dict[str, Any]]:
+        """Get mastery data for a specific content area."""
+        async with self.db.execute(
+            """
+            SELECT * FROM content_mastery
+            WHERE user_id = ? AND content_area = ?
+            """,
+            (user_id, content_area),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_all_content_mastery(
+        self, user_id: int
+    ) -> list[dict[str, Any]]:
+        """Get mastery data for all content areas for a user."""
+        async with self.db.execute(
+            """
+            SELECT * FROM content_mastery
+            WHERE user_id = ?
+            ORDER BY content_area
+            """,
+            (user_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def update_content_mastery(
+        self,
+        user_id: int,
+        content_area: str,
+        is_correct: bool,
+    ) -> Optional[int]:
+        """
+        Update mastery for a content area after answering a question.
+
+        Returns:
+            New mastery level if promoted, None otherwise
+        """
+        from src.config.constants import MASTERY_REQUIREMENTS, MasteryLevel
+
+        # Get or create mastery record
+        mastery = await self.get_content_mastery(user_id, content_area)
+
+        if mastery is None:
+            # Create new record
+            await self.db.execute(
+                """
+                INSERT INTO content_mastery
+                (user_id, content_area, questions_answered, correct_answers, current_accuracy, mastery_level)
+                VALUES (?, ?, 1, ?, ?, 0)
+                """,
+                (user_id, content_area, 1 if is_correct else 0, 1.0 if is_correct else 0.0),
+            )
+            await self.db.commit()
+            return None
+
+        # Update existing record
+        new_questions = mastery["questions_answered"] + 1
+        new_correct = mastery["correct_answers"] + (1 if is_correct else 0)
+        new_accuracy = new_correct / new_questions
+        old_level = mastery["mastery_level"]
+
+        # Check for promotion
+        new_level = old_level
+        for level in [MasteryLevel.MASTER, MasteryLevel.INTERMEDIATE, MasteryLevel.BEGINNER]:
+            req = MASTERY_REQUIREMENTS[level]
+            if new_questions >= req["min_questions"] and new_accuracy >= req["min_accuracy"]:
+                new_level = level.value
+                break
+
+        await self.db.execute(
+            """
+            UPDATE content_mastery
+            SET questions_answered = ?,
+                correct_answers = ?,
+                current_accuracy = ?,
+                mastery_level = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND content_area = ?
+            """,
+            (new_questions, new_correct, new_accuracy, new_level, user_id, content_area),
+        )
+        await self.db.commit()
+
+        # Return new level if promoted
+        if new_level > old_level:
+            return new_level
+        return None
+
+    async def get_mastered_areas_count(self, user_id: int) -> int:
+        """Get count of areas where user has achieved Master level."""
+        from src.config.constants import MasteryLevel
+
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count FROM content_mastery
+            WHERE user_id = ? AND mastery_level = ?
+            """,
+            (user_id, MasteryLevel.MASTER.value),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
+
+    # =========================================================================
+    # Tiered Achievement Operations
+    # =========================================================================
+
+    async def grant_tiered_achievement(
+        self,
+        user_id: int,
+        achievement_type: TieredAchievementType,
+        tier: AchievementTier,
+        progress: int = 0,
+    ) -> bool:
+        """
+        Grant a tiered achievement to user.
+
+        Returns True if newly granted, False if already exists.
+        """
+        try:
+            await self.db.execute(
+                """
+                INSERT INTO achievements (user_id, achievement_type, tier, progress)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, achievement_type.value, tier.value, progress),
+            )
+            await self.db.commit()
+            logger.info(
+                f"Granted {achievement_type.value} ({tier.value}) to user {user_id}"
+            )
+            return True
+        except aiosqlite.IntegrityError:
+            # Already has this achievement
+            return False
+
+    async def update_achievement_progress(
+        self,
+        user_id: int,
+        achievement_type: TieredAchievementType,
+        tier: AchievementTier,
+        progress: int,
+    ) -> None:
+        """Update progress for an existing achievement."""
+        await self.db.execute(
+            """
+            UPDATE achievements
+            SET progress = ?
+            WHERE user_id = ? AND achievement_type = ? AND tier = ?
+            """,
+            (progress, user_id, achievement_type.value, tier.value),
+        )
+        await self.db.commit()
+
+    async def get_tiered_achievement(
+        self,
+        user_id: int,
+        achievement_type: TieredAchievementType,
+        tier: AchievementTier,
+    ) -> Optional[dict[str, Any]]:
+        """Get a specific tiered achievement for a user."""
+        async with self.db.execute(
+            """
+            SELECT * FROM achievements
+            WHERE user_id = ? AND achievement_type = ? AND tier = ?
+            """,
+            (user_id, achievement_type.value, tier.value),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_highest_tier(
+        self,
+        user_id: int,
+        achievement_type: TieredAchievementType,
+    ) -> Optional[AchievementTier]:
+        """Get the highest tier earned for an achievement type."""
+        async with self.db.execute(
+            """
+            SELECT tier FROM achievements
+            WHERE user_id = ? AND achievement_type = ?
+            ORDER BY CASE tier
+                WHEN 'gold' THEN 3
+                WHEN 'silver' THEN 2
+                WHEN 'bronze' THEN 1
+            END DESC
+            LIMIT 1
+            """,
+            (user_id, achievement_type.value),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return AchievementTier(row["tier"])
+            return None
+
+    async def get_all_tiered_achievements(
+        self,
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        """Get all tiered achievements for a user."""
+        async with self.db.execute(
+            """
+            SELECT * FROM achievements
+            WHERE user_id = ?
+            ORDER BY achievement_type, CASE tier
+                WHEN 'gold' THEN 3
+                WHEN 'silver' THEN 2
+                WHEN 'bronze' THEN 1
+            END DESC
+            """,
+            (user_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # =========================================================================
+    # Weekly Challenge Operations
+    # =========================================================================
+
+    async def create_weekly_challenge(
+        self,
+        week_start: date,
+        challenge_type: str,
+        target_value: int,
+        bonus_points: int,
+        description: str,
+        target_area: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Create a new weekly challenge.
+
+        Returns the challenge ID if created, None if already exists.
+        """
+        try:
+            async with self.db.execute(
+                """
+                INSERT INTO weekly_challenges
+                (week_start, challenge_type, target_value, target_area, bonus_points, description)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (week_start.isoformat(), challenge_type, target_value, target_area, bonus_points, description),
+            ) as cursor:
+                await self.db.commit()
+                return cursor.lastrowid
+        except aiosqlite.IntegrityError:
+            return None
+
+    async def get_current_week_challenges(self) -> list[dict[str, Any]]:
+        """Get all challenges for the current week."""
+        # Get Monday of current week
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+        async with self.db.execute(
+            """
+            SELECT * FROM weekly_challenges
+            WHERE week_start = ?
+            ORDER BY id
+            """,
+            (week_start.isoformat(),),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_user_weekly_progress(
+        self, user_id: int
+    ) -> list[dict[str, Any]]:
+        """Get user's progress on current week's challenges."""
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+        async with self.db.execute(
+            """
+            SELECT wc.*, uwp.current_value, uwp.completed, uwp.completed_at
+            FROM weekly_challenges wc
+            LEFT JOIN user_weekly_progress uwp ON wc.id = uwp.challenge_id AND uwp.user_id = ?
+            WHERE wc.week_start = ?
+            ORDER BY wc.id
+            """,
+            (user_id, week_start.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def update_weekly_progress(
+        self,
+        user_id: int,
+        challenge_id: int,
+        increment: int = 1,
+    ) -> Optional[bool]:
+        """
+        Update user's progress on a weekly challenge.
+
+        Returns True if just completed, False if already complete or still in progress, None on error.
+        """
+        # Get challenge details
+        async with self.db.execute(
+            "SELECT * FROM weekly_challenges WHERE id = ?",
+            (challenge_id,),
+        ) as cursor:
+            challenge = await cursor.fetchone()
+            if not challenge:
+                return None
+            challenge = dict(challenge)
+
+        target = challenge["target_value"]
+
+        # Get or create progress record
+        async with self.db.execute(
+            """
+            SELECT * FROM user_weekly_progress
+            WHERE user_id = ? AND challenge_id = ?
+            """,
+            (user_id, challenge_id),
+        ) as cursor:
+            progress = await cursor.fetchone()
+
+        if progress:
+            progress = dict(progress)
+            if progress["completed"]:
+                return False  # Already completed
+
+            new_value = progress["current_value"] + increment
+            completed = new_value >= target
+
+            await self.db.execute(
+                """
+                UPDATE user_weekly_progress
+                SET current_value = ?, completed = ?, completed_at = ?
+                WHERE user_id = ? AND challenge_id = ?
+                """,
+                (
+                    new_value,
+                    completed,
+                    datetime.now().isoformat() if completed else None,
+                    user_id,
+                    challenge_id,
+                ),
+            )
+        else:
+            new_value = increment
+            completed = new_value >= target
+
+            await self.db.execute(
+                """
+                INSERT INTO user_weekly_progress
+                (user_id, challenge_id, current_value, completed, completed_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    challenge_id,
+                    new_value,
+                    completed,
+                    datetime.now().isoformat() if completed else None,
+                ),
+            )
+
+        await self.db.commit()
+
+        if completed:
+            # Increment user's challenges_completed counter
+            await self.db.execute(
+                """
+                UPDATE user_stats
+                SET challenges_completed = COALESCE(challenges_completed, 0) + 1
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+            await self.db.commit()
+            return True
+
+        return False
+
+    async def get_completed_challenges_count(self, user_id: int) -> int:
+        """Get total number of challenges completed by user."""
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count FROM user_weekly_progress
+            WHERE user_id = ? AND completed = 1
+            """,
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
+
+    # =========================================================================
+    # Leaderboard Operations
+    # =========================================================================
+
+    async def set_leaderboard_opt_in(
+        self,
+        user_id: int,
+        opted_in: bool,
+    ) -> None:
+        """Set user's leaderboard opt-in status."""
+        await self.db.execute(
+            "UPDATE users SET leaderboard_opted_in = ? WHERE id = ?",
+            (opted_in, user_id),
+        )
+        await self.db.commit()
+
+    async def get_leaderboard_opt_in(self, user_id: int) -> bool:
+        """Check if user has opted into the leaderboard."""
+        async with self.db.execute(
+            "SELECT leaderboard_opted_in FROM users WHERE id = ?",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return bool(row["leaderboard_opted_in"]) if row else False
+
+    async def generate_display_name(self, user_id: int) -> str:
+        """Generate a random silly animal name for anonymous leaderboard display."""
+        import random
+
+        from src.config.constants import ANIMAL_ADJECTIVES, ANIMAL_NAMES
+
+        adjective = random.choice(ANIMAL_ADJECTIVES)
+        animal = random.choice(ANIMAL_NAMES)
+        display_name = f"{adjective} {animal}"
+
+        # Save the display name
+        await self.db.execute(
+            "UPDATE users SET display_name = ? WHERE id = ?",
+            (display_name, user_id),
+        )
+        await self.db.commit()
+
+        return display_name
+
+    async def get_display_name(self, user_id: int) -> Optional[str]:
+        """Get user's display name for leaderboard."""
+        async with self.db.execute(
+            "SELECT display_name FROM users WHERE id = ?",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["display_name"] if row else None
+
+    async def get_weekly_leaderboard(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Get weekly leaderboard of opted-in users.
+
+        Returns users ranked by points earned in the current week.
+        """
+        # Get start of current week (Monday)
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+        async with self.db.execute(
+            """
+            SELECT
+                u.id as user_id,
+                u.display_name,
+                COALESCE(SUM(
+                    CASE WHEN ua.is_correct = 1 THEN 10 ELSE 0 END
+                ), 0) as week_points,
+                COUNT(ua.id) as questions_answered
+            FROM users u
+            LEFT JOIN user_answers ua ON u.id = ua.user_id
+                AND DATE(ua.answered_at) >= ?
+            WHERE u.leaderboard_opted_in = 1
+            GROUP BY u.id
+            HAVING week_points > 0 OR questions_answered > 0
+            ORDER BY week_points DESC, questions_answered DESC
+            LIMIT ?
+            """,
+            (week_start.isoformat(), limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for i, row in enumerate(rows, 1):
+                result.append({
+                    "rank": i,
+                    "user_id": row["user_id"],
+                    "display_name": row["display_name"] or f"User #{row['user_id']}",
+                    "points": row["week_points"],
+                    "questions": row["questions_answered"],
+                })
+            return result
+
+    async def get_all_time_leaderboard(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Get all-time leaderboard of opted-in users.
+
+        Returns users ranked by total points.
+        """
+        async with self.db.execute(
+            """
+            SELECT
+                u.id as user_id,
+                u.display_name,
+                COALESCE(us.total_points, 0) as total_points,
+                COALESCE(us.peak_streak, us.longest_streak, 0) as peak_streak
+            FROM users u
+            LEFT JOIN user_stats us ON u.id = us.user_id
+            WHERE u.leaderboard_opted_in = 1
+            ORDER BY total_points DESC, peak_streak DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for i, row in enumerate(rows, 1):
+                result.append({
+                    "rank": i,
+                    "user_id": row["user_id"],
+                    "display_name": row["display_name"] or f"User #{row['user_id']}",
+                    "points": row["total_points"],
+                    "streak": row["peak_streak"],
+                })
+            return result
+
+    async def get_user_rank(
+        self,
+        user_id: int,
+        weekly: bool = True,
+    ) -> Optional[int]:
+        """Get user's rank on the leaderboard."""
+        if weekly:
+            leaderboard = await self.get_weekly_leaderboard(limit=1000)
+        else:
+            leaderboard = await self.get_all_time_leaderboard(limit=1000)
+
+        for entry in leaderboard:
+            if entry["user_id"] == user_id:
+                return entry["rank"]
+        return None
+
+    # =========================================================================
+    # Comeback Bonus Operations
+    # =========================================================================
+
+    async def check_and_create_comeback_bonus(
+        self,
+        user_id: int,
+        days_inactive: int,
+    ) -> Optional[dict[str, Any]]:
+        """
+        Check if user qualifies for comeback bonus and create it.
+
+        Args:
+            user_id: Internal user ID
+            days_inactive: Number of days since last activity
+
+        Returns:
+            Bonus info dict if created, None otherwise
+        """
+        from src.config.constants import COMEBACK_CONFIG
+
+        min_inactive = COMEBACK_CONFIG["min_inactive_days"]
+        if days_inactive < min_inactive:
+            return None
+
+        # Check for existing unexpired bonus
+        async with self.db.execute(
+            """
+            SELECT * FROM comeback_bonuses
+            WHERE user_id = ? AND claimed = 0 AND expires_at > datetime('now')
+            """,
+            (user_id,),
+        ) as cursor:
+            existing = await cursor.fetchone()
+            if existing:
+                return None  # Already has an active bonus
+
+        # Determine bonus tier
+        thresholds = COMEBACK_CONFIG["inactive_thresholds"]
+        bonus_points_list = COMEBACK_CONFIG["bonus_points"]
+
+        bonus_points = bonus_points_list[0]
+        for i, threshold in enumerate(thresholds):
+            if days_inactive >= threshold:
+                bonus_points = bonus_points_list[i]
+
+        # Calculate expiry
+        expiry_hours = COMEBACK_CONFIG["bonus_expiry_hours"]
+        expires_at = datetime.now() + timedelta(hours=expiry_hours)
+
+        # Create bonus
+        await self.db.execute(
+            """
+            INSERT INTO comeback_bonuses
+            (user_id, days_inactive, bonus_type, bonus_value, expires_at)
+            VALUES (?, ?, 'points', ?, ?)
+            """,
+            (user_id, days_inactive, bonus_points, expires_at.isoformat()),
+        )
+        await self.db.commit()
+
+        return {
+            "days_inactive": days_inactive,
+            "bonus_points": bonus_points,
+            "expires_at": expires_at,
+        }
+
+    async def get_unclaimed_comeback_bonus(
+        self,
+        user_id: int,
+    ) -> Optional[dict[str, Any]]:
+        """Get any unclaimed comeback bonus for user."""
+        async with self.db.execute(
+            """
+            SELECT * FROM comeback_bonuses
+            WHERE user_id = ? AND claimed = 0 AND expires_at > datetime('now')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def claim_comeback_bonus(
+        self,
+        user_id: int,
+        bonus_id: int,
+    ) -> int:
+        """
+        Claim a comeback bonus and add points.
+
+        Returns the bonus points added.
+        """
+        # Get bonus
+        async with self.db.execute(
+            "SELECT * FROM comeback_bonuses WHERE id = ? AND user_id = ?",
+            (bonus_id, user_id),
+        ) as cursor:
+            bonus = await cursor.fetchone()
+
+        if not bonus:
+            return 0
+
+        bonus = dict(bonus)
+        if bonus["claimed"]:
+            return 0
+
+        bonus_points = bonus["bonus_value"]
+
+        # Mark as claimed
+        await self.db.execute(
+            """
+            UPDATE comeback_bonuses
+            SET claimed = 1, claimed_at = datetime('now')
+            WHERE id = ?
+            """,
+            (bonus_id,),
+        )
+
+        # Add points
+        await self.add_points(user_id, bonus_points)
+
+        # Increment comebacks count
+        await self.db.execute(
+            """
+            UPDATE user_stats
+            SET comebacks = COALESCE(comebacks, 0) + 1
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        await self.db.commit()
+
+        return bonus_points
+
+    # =========================================================================
+    # Seasonal Event Operations
+    # =========================================================================
+
+    async def create_seasonal_event(
+        self,
+        event_name: str,
+        event_type: str,
+        start_date: datetime,
+        end_date: datetime,
+        description: Optional[str] = None,
+        focus_area: Optional[str] = None,
+        bonus_multiplier: float = 1.0,
+        created_by: Optional[int] = None,
+    ) -> int:
+        """Create a new seasonal event. Returns event ID."""
+        async with self.db.execute(
+            """
+            INSERT INTO seasonal_events
+            (event_name, event_type, start_date, end_date, description, focus_area, bonus_multiplier, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (event_name, event_type, start_date.isoformat(), end_date.isoformat(),
+             description, focus_area, bonus_multiplier, created_by),
+        ) as cursor:
+            await self.db.commit()
+            return cursor.lastrowid
+
+    async def get_active_events(self) -> list[dict[str, Any]]:
+        """Get all currently active seasonal events."""
+        async with self.db.execute(
+            """
+            SELECT * FROM seasonal_events
+            WHERE start_date <= datetime('now') AND end_date >= datetime('now')
+            ORDER BY start_date
+            """,
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_event_by_id(self, event_id: int) -> Optional[dict[str, Any]]:
+        """Get a specific seasonal event."""
+        async with self.db.execute(
+            "SELECT * FROM seasonal_events WHERE id = ?",
+            (event_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def update_event_progress(
+        self,
+        user_id: int,
+        event_id: int,
+        is_correct: bool,
+        points_earned: int = 0,
+    ) -> None:
+        """Update user's progress in a seasonal event."""
+        # Get or create progress record
+        async with self.db.execute(
+            """
+            SELECT * FROM user_event_progress
+            WHERE user_id = ? AND event_id = ?
+            """,
+            (user_id, event_id),
+        ) as cursor:
+            progress = await cursor.fetchone()
+
+        if progress:
+            await self.db.execute(
+                """
+                UPDATE user_event_progress
+                SET questions_answered = questions_answered + 1,
+                    correct_answers = correct_answers + ?,
+                    points_earned = points_earned + ?
+                WHERE user_id = ? AND event_id = ?
+                """,
+                (1 if is_correct else 0, points_earned, user_id, event_id),
+            )
+        else:
+            await self.db.execute(
+                """
+                INSERT INTO user_event_progress
+                (user_id, event_id, questions_answered, correct_answers, points_earned)
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (user_id, event_id, 1 if is_correct else 0, points_earned),
+            )
+
+        await self.db.commit()
+
+    async def get_user_event_progress(
+        self,
+        user_id: int,
+        event_id: int,
+    ) -> Optional[dict[str, Any]]:
+        """Get user's progress in a specific event."""
+        async with self.db.execute(
+            """
+            SELECT * FROM user_event_progress
+            WHERE user_id = ? AND event_id = ?
+            """,
+            (user_id, event_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def end_event(self, event_id: int) -> None:
+        """End an event early by setting end_date to now."""
+        await self.db.execute(
+            "UPDATE seasonal_events SET end_date = datetime('now') WHERE id = ?",
+            (event_id,),
+        )
+        await self.db.commit()
 
     # =========================================================================
     # Ban Operations
