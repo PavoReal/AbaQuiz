@@ -22,6 +22,9 @@ function generationControls() {
         distribution: {},
         costEstimate: 0,
 
+        // Generation toggle
+        generationEnabled: true,
+
         // State
         isRunning: false,
         isStarting: false,
@@ -44,6 +47,7 @@ function generationControls() {
 
         init() {
             // Load initial data
+            this.loadGenerationEnabled();
             this.loadPoolStats();
             this.loadConfig();
             this.updateDistribution();
@@ -62,6 +66,38 @@ function generationControls() {
                 this.progress = null;
                 this.isRunning = false;
             });
+        },
+
+        async loadGenerationEnabled() {
+            try {
+                const response = await fetch('/api/generation/enabled');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.generationEnabled = data.generation_enabled;
+                }
+            } catch (error) {
+                console.error('Failed to load generation status:', error);
+            }
+        },
+
+        async toggleGeneration() {
+            const newState = !this.generationEnabled;
+            try {
+                const response = await fetch('/api/generation/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: newState })
+                });
+                if (response.ok) {
+                    this.generationEnabled = newState;
+                } else {
+                    const data = await response.json();
+                    alert('Failed to toggle: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Failed to toggle generation:', error);
+                alert('Failed to toggle generation');
+            }
         },
 
         async loadPoolStats() {

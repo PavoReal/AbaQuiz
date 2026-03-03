@@ -90,6 +90,23 @@ class PoolManager:
         """
         repo = await get_repository(self.settings.database_path)
 
+        # Check if generation is enabled
+        generation_enabled = await repo.get_system_setting_bool(
+            "generation_enabled", default=True
+        )
+        if not generation_enabled:
+            logger.info("Question generation is disabled via system settings")
+            return {
+                "needed": False,
+                "skipped": True,
+                "reason": "generation_disabled",
+                "avg_unseen": 0,
+                "active_users": 0,
+                "total_questions": 0,
+                "generated": 0,
+                "by_area": {},
+            }
+
         # Get current pool status (use config value for active days)
         active_days = self.settings.pool_active_days
         active_users = await repo.get_active_user_count(days=active_days)

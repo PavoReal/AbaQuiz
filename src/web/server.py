@@ -63,6 +63,8 @@ def setup_routes(app: web.Application) -> None:
         api_get_progress,
         api_cancel_generation,
         api_calculate_distribution,
+        api_get_generation_enabled,
+        api_toggle_generation,
     )
 
     app.router.add_get("/", index)
@@ -87,3 +89,5 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_get("/api/generation/progress", api_get_progress)
     app.router.add_post("/api/generation/cancel", api_cancel_generation)
     app.router.add_get("/api/generation/distribution", api_calculate_distribution)
+    app.router.add_get("/api/generation/enabled", api_get_generation_enabled)
+    app.router.add_post("/api/generation/toggle", api_toggle_generation)

@@ -205,7 +205,11 @@ async def check_question_pool() -> None:
         pool_manager = get_pool_manager()
         result = await pool_manager.check_and_replenish_pool()
 
-        if result["needed"]:
+        if result.get("skipped"):
+            logger.info(
+                f"Pool check skipped: {result.get('reason', 'unknown')}"
+            )
+        elif result["needed"]:
             logger.info(
                 f"Pool replenishment complete: {result['generated']} questions added. "
                 f"Distribution: {result['by_area']}"

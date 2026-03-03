@@ -10,6 +10,31 @@
         <p class="text-sm text-text-muted mt-1">Generate and manage the question pool</p>
     </div>
 
+    <!-- Generation Toggle Banner -->
+    <div class="mb-6 card p-4 flex items-center justify-between"
+         :class="generationEnabled ? '' : 'border-l-4'" :style="generationEnabled ? '' : 'border-left-color: var(--color-warning);'">
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-text-primary">Question Generation</span>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      :class="generationEnabled ? 'bg-success-subtle text-success' : 'bg-warning-subtle text-warning'"
+                      x-text="generationEnabled ? 'ON' : 'OFF'"></span>
+            </div>
+            <p class="text-xs text-text-muted" x-show="!generationEnabled">
+                Automatic and manual generation is paused
+            </p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" class="sr-only peer" :checked="generationEnabled"
+                   @change="toggleGeneration()">
+            <div class="w-9 h-5 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:rounded-full after:h-4 after:w-4 after:transition-all"
+                 style="background-color: var(--color-bg-muted);"
+                 :style="generationEnabled ? 'background-color: var(--color-success);' : ''"
+                 ><div class="absolute top-[2px] left-[2px] rounded-full h-4 w-4 transition-all bg-white"
+                       :class="generationEnabled ? 'translate-x-full' : ''"></div></div>
+        </label>
+    </div>
+
     <!-- Pool Status Dashboard -->
     <section class="mb-8">
         <h2 class="text-lg font-semibold text-text-primary mb-4">Pool Status</h2>
@@ -179,7 +204,7 @@
                     <!-- Generate Button -->
                     <button class="btn-primary w-full"
                             @click="startGeneration()"
-                            :disabled="questionCount < 1 || questionCount > 500 || isStarting">
+                            :disabled="questionCount < 1 || questionCount > 500 || isStarting || !generationEnabled">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" x-show="!isStarting">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                         </svg>

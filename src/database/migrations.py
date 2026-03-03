@@ -23,9 +23,13 @@ from src.database.models import (
     CREATE_QUESTION_STATS_TABLE,
     CREATE_QUESTION_REVIEWS_TABLE,
     CREATE_SEASONAL_EVENTS_TABLE,
+    CREATE_SYSTEM_SETTINGS_TABLE,
+    CREATE_USER_DAILY_SNAPSHOTS_TABLE,
     CREATE_USER_EVENT_PROGRESS_TABLE,
+    CREATE_USER_TIER_STATS_TABLE,
     CREATE_USER_WEEKLY_PROGRESS_TABLE,
     CREATE_WEEKLY_CHALLENGES_TABLE,
+    CREATE_WEEKLY_RETENTION_SNAPSHOTS_TABLE,
 )
 
 logger = get_logger(__name__)
@@ -117,6 +121,11 @@ async def run_migrations(db_path: str) -> None:
         if current_version < 7:
             await migrate_to_v7(db)
             await set_schema_version(db, 7)
+
+        # Migration v8: Add system settings table
+        if current_version < 8:
+            await migrate_to_v8(db)
+            await set_schema_version(db, 8)
 
         await db.commit()
 
@@ -657,3 +666,29 @@ async def migrate_to_v7(db: aiosqlite.Connection) -> None:
     logger.info("Migrated old achievements to new tiered system")
 
     logger.info("Migration v7 complete")
+
+
+async def migrate_to_v8(db: aiosqlite.Connection) -> None:
+    """
+    Migration to schema version 8.
+
+    Adds system settings table for global configuration:
+    - New table: system_settings (key-value store)
+    - Seeds default: generation_enabled = "true"
+    """
+    logger.info("Running migration v8: Adding system settings table")
+
+    # Create system_settings table
+    await db.execute(CREATE_SYSTEM_SETTINGS_TABLE)
+    logger.info("Created system_settings table")
+
+    # Seed default generation_enabled setting
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO system_settings (key, value)
+        VALUES ('generation_enabled', 'true')
+        """
+    )
+    logger.info("Seeded default generation_enabled = true")
+
+    logger.info("Migration v8 complete")

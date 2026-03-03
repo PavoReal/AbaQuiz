@@ -627,6 +627,7 @@ def format_admin_help() -> str:
 /usage - API usage stats
 /notify - Notification settings
 /scheduler - Scheduler status & diagnostics
+/generation - Toggle question generation on/off
 
 🎉 *Events*
 /create\\_event <name> <type> <days> - Create seasonal event
@@ -672,6 +673,7 @@ def _format_admin_help_section() -> str:
 /usage - API usage stats
 /notify - Notification settings
 /scheduler - Scheduler status
+/generation - Toggle question generation on/off
 /admin - Full admin help"""
 
 

@@ -59,10 +59,14 @@ async def generation_page(request: web.Request) -> dict:
     # Get current config
     config = _get_generation_config(settings)
 
+    # Get generation enabled status
+    generation_enabled = await repo.get_system_setting_bool("generation_enabled", default=True)
+
     return {
         "pool_stats": pool_stats,
         "config": config,
         "is_running": _generation_state["running"],
+        "generation_enabled": generation_enabled,
     }
 
 
@@ -179,6 +183,15 @@ async def api_start_generation(request: web.Request) -> web.Response:
     """API endpoint to start question generation."""
     if not await _check_admin(request):
         raise web.HTTPForbidden(text="Admin access required")
+
+    # Check if generation is enabled
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+    generation_enabled = await repo.get_system_setting_bool("generation_enabled", default=True)
+    if not generation_enabled:
+        return web.json_response({
+            "error": "Question generation is disabled. Enable it first.",
+        }, status=403)
 
     # Check if already running
     if _generation_state["running"]:
@@ -466,6 +479,49 @@ async def api_cancel_generation(request: web.Request) -> web.Response:
     return web.json_response({
         "success": True,
         "message": "Cancellation requested - generation will stop after current batch",
+    })
+
+
+async def api_get_generation_enabled(request: web.Request) -> web.Response:
+    """API endpoint to get generation enabled status."""
+    if not await _check_admin(request):
+        raise web.HTTPForbidden(text="Admin access required")
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+    enabled = await repo.get_system_setting_bool("generation_enabled", default=True)
+
+    return web.json_response({"generation_enabled": enabled})
+
+
+async def api_toggle_generation(request: web.Request) -> web.Response:
+    """API endpoint to toggle generation enabled/disabled."""
+    if not await _check_admin(request):
+        raise web.HTTPForbidden(text="Admin access required")
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return web.json_response({"error": "'enabled' must be a boolean"}, status=400)
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+    await repo.set_system_setting(
+        "generation_enabled",
+        "true" if enabled else "false",
+    )
+
+    status = "enabled" if enabled else "disabled"
+    logger.info(f"Question generation {status} via web admin")
+
+    return web.json_response({
+        "success": True,
+        "generation_enabled": enabled,
+        "message": f"Question generation {status}",
     })
 
 

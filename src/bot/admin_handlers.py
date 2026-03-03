@@ -701,6 +701,72 @@ async def scheduler_command(
 
 
 # =============================================================================
+# Generation Toggle
+# =============================================================================
+
+
+@dm_only_middleware
+@admin_middleware
+async def generation_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """
+    Handle /generation command - toggle question generation on/off.
+
+    Usage:
+        /generation        - Show current status
+        /generation on     - Enable generation
+        /generation off    - Disable generation
+    """
+    if not update.effective_user or not update.message:
+        return
+
+    args = context.args or []
+    log_user_action(logger, update.effective_user.id, f"/generation {' '.join(args)}")
+
+    settings = get_settings()
+    repo = await get_repository(settings.database_path)
+
+    if not args:
+        # Show status
+        enabled = await repo.get_system_setting_bool("generation_enabled", default=True)
+        status = "ON" if enabled else "OFF"
+        await update.message.reply_text(
+            f"*Question Generation*\n\n"
+            f"Status: *{status}*\n\n"
+            f"Use `/generation on` or `/generation off` to toggle.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    action = args[0].lower()
+    if action not in ("on", "off"):
+        await update.message.reply_text(
+            "Usage: /generation [on|off]"
+        )
+        return
+
+    enabled = action == "on"
+    await repo.set_system_setting(
+        "generation_enabled",
+        "true" if enabled else "false",
+        updated_by=update.effective_user.id,
+    )
+
+    status = "enabled" if enabled else "disabled"
+    await update.message.reply_text(
+        f"Question generation *{status}*.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    logger.info(
+        f"Generation {'enabled' if enabled else 'disabled'} "
+        f"by admin {update.effective_user.id}"
+    )
+
+
+# =============================================================================
 # Bonus Question Push
 # =============================================================================
 

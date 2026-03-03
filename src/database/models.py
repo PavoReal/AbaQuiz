@@ -256,6 +256,31 @@ CREATE TABLE IF NOT EXISTS generation_progress (
 )
 """
 
+CREATE_SYSTEM_SETTINGS_TABLE = """
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by INTEGER
+)
+"""
+
+# User tier stats - per-difficulty statistics
+CREATE_USER_TIER_STATS_TABLE = """
+CREATE TABLE IF NOT EXISTS user_tier_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    difficulty_tier TEXT NOT NULL,
+    questions_answered INTEGER DEFAULT 0,
+    correct_answers INTEGER DEFAULT 0,
+    accuracy REAL DEFAULT 0.0,
+    avg_response_time REAL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(user_id, difficulty_tier)
+)
+"""
+
 # =============================================================================
 # GAMIFICATION SYSTEM v2 TABLES
 # =============================================================================
@@ -369,6 +394,85 @@ CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
 )
 """
 
+# =============================================================================
+# ANALYTICS TABLES
+# =============================================================================
+
+CREATE_DAILY_SYSTEM_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS daily_system_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date DATE NOT NULL UNIQUE,
+    total_users INTEGER DEFAULT 0,
+    subscribed_users INTEGER DEFAULT 0,
+    active_users_7d INTEGER DEFAULT 0,
+    active_users_1d INTEGER DEFAULT 0,
+    new_users INTEGER DEFAULT 0,
+    churned_users INTEGER DEFAULT 0,
+    scheduled_sent INTEGER DEFAULT 0,
+    scheduled_answered INTEGER DEFAULT 0,
+    ondemand_answered INTEGER DEFAULT 0,
+    bonus_answered INTEGER DEFAULT 0,
+    total_correct INTEGER DEFAULT 0,
+    total_incorrect INTEGER DEFAULT 0,
+    total_response_time_ms INTEGER DEFAULT 0,
+    response_count INTEGER DEFAULT 0,
+    content_area_stats TEXT,
+    tier_stats TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+CREATE_HOURLY_ACTIVITY_TABLE = """
+CREATE TABLE IF NOT EXISTS hourly_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_date DATE NOT NULL,
+    hour_utc INTEGER NOT NULL,
+    answers_count INTEGER DEFAULT 0,
+    correct_count INTEGER DEFAULT 0,
+    unique_users INTEGER DEFAULT 0,
+    total_response_time_ms INTEGER DEFAULT 0,
+    tier_breakdown TEXT,
+    UNIQUE(activity_date, hour_utc)
+)
+"""
+
+CREATE_USER_DAILY_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS user_daily_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    snapshot_date DATE NOT NULL,
+    user_timezone TEXT,
+    scheduled_received INTEGER DEFAULT 0,
+    scheduled_answered INTEGER DEFAULT 0,
+    ondemand_answered INTEGER DEFAULT 0,
+    correct_count INTEGER DEFAULT 0,
+    incorrect_count INTEGER DEFAULT 0,
+    total_response_time_ms INTEGER DEFAULT 0,
+    content_area_breakdown TEXT,
+    tier_breakdown TEXT,
+    streak_value INTEGER DEFAULT 0,
+    was_active BOOLEAN DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(user_id, snapshot_date)
+)
+"""
+
+CREATE_WEEKLY_RETENTION_SNAPSHOTS_TABLE = """
+CREATE TABLE IF NOT EXISTS weekly_retention_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start DATE NOT NULL UNIQUE,
+    active_users INTEGER DEFAULT 0,
+    retained_from_last_week INTEGER DEFAULT 0,
+    churned_this_week INTEGER DEFAULT 0,
+    reactivated_this_week INTEGER DEFAULT 0,
+    new_this_week INTEGER DEFAULT 0,
+    retention_rate REAL DEFAULT 0.0,
+    churn_rate REAL DEFAULT 0.0,
+    tier_retention TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 # Indexes for performance
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)",
@@ -433,4 +537,11 @@ ALL_TABLES = [
     CREATE_SEASONAL_EVENTS_TABLE,
     CREATE_USER_EVENT_PROGRESS_TABLE,
     CREATE_LEADERBOARD_SNAPSHOTS_TABLE,
+    CREATE_USER_TIER_STATS_TABLE,
+    CREATE_SYSTEM_SETTINGS_TABLE,
+    # Analytics tables (v7)
+    CREATE_DAILY_SYSTEM_SNAPSHOTS_TABLE,
+    CREATE_HOURLY_ACTIVITY_TABLE,
+    CREATE_USER_DAILY_SNAPSHOTS_TABLE,
+    CREATE_WEEKLY_RETENTION_SNAPSHOTS_TABLE,
 ]

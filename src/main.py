@@ -211,6 +211,7 @@ def register_handlers(application) -> None:
         broadcast_command,
         create_event_command,
         end_event_command,
+        generation_command,
         notify_command,
         scheduler_command,
         unban_command,
@@ -280,6 +281,7 @@ def register_handlers(application) -> None:
     application.add_handler(CommandHandler("scheduler", scheduler_command))
     application.add_handler(CommandHandler("create_event", create_event_command))
     application.add_handler(CommandHandler("end_event", end_event_command))
+    application.add_handler(CommandHandler("generation", generation_command))
 
     # Callback query handlers
     application.add_handler(

@@ -2800,6 +2800,1307 @@ class Repository:
                 result.append(d)
             return result
 
+    # =========================================================================
+    # Difficulty Tier Operations
+    # =========================================================================
+
+    async def get_user_difficulty_tiers(self, user_id: int) -> list[str]:
+        """Get user's selected difficulty tiers.
+
+        Args:
+            user_id: Telegram user ID
+
+        Returns:
+            List of difficulty tier strings (defaults to ["easy"])
+        """
+        async with self.db.execute(
+            "SELECT difficulty_tiers FROM users WHERE telegram_id = ?",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and row["difficulty_tiers"]:
+                try:
+                    return json.loads(row["difficulty_tiers"])
+                except json.JSONDecodeError:
+                    pass
+            return ["easy"]  # Default
+
+    async def update_user_difficulty_tiers(
+        self,
+        user_id: int,
+        tiers: list[str],
+    ) -> None:
+        """Update user's selected difficulty tiers.
+
+        Args:
+            user_id: Telegram user ID
+            tiers: List of difficulty tier strings
+        """
+        tiers_json = json.dumps(tiers)
+        await self.db.execute(
+            "UPDATE users SET difficulty_tiers = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE telegram_id = ?",
+            (tiers_json, user_id),
+        )
+        await self.db.commit()
+
+    async def ensure_user_tier_stats(self, user_id: int, tier: str) -> None:
+        """Ensure a user_tier_stats record exists for user and tier.
+
+        Args:
+            user_id: Internal user ID (not telegram_id)
+            tier: Difficulty tier string
+        """
+        await self.db.execute(
+            """
+            INSERT OR IGNORE INTO user_tier_stats (user_id, difficulty_tier)
+            VALUES (?, ?)
+            """,
+            (user_id, tier),
+        )
+        await self.db.commit()
+
+    async def get_user_tier_stats(
+        self,
+        user_id: int,
+        tier: str,
+    ) -> Optional[dict[str, Any]]:
+        """Get user stats for a specific difficulty tier.
+
+        Args:
+            user_id: Internal user ID
+            tier: Difficulty tier string
+
+        Returns:
+            Stats dict or None if not found
+        """
+        async with self.db.execute(
+            """
+            SELECT * FROM user_tier_stats
+            WHERE user_id = ? AND difficulty_tier = ?
+            """,
+            (user_id, tier),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_all_user_tier_stats(
+        self,
+        user_id: int,
+    ) -> dict[str, dict[str, Any]]:
+        """Get user stats for all difficulty tiers.
+
+        Args:
+            user_id: Internal user ID
+
+        Returns:
+            Dict mapping tier name to stats dict
+        """
+        async with self.db.execute(
+            """
+            SELECT * FROM user_tier_stats
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["difficulty_tier"]: dict(row) for row in rows}
+
+    async def update_user_tier_stats(
+        self,
+        user_id: int,
+        tier: str,
+        **kwargs: Any,
+    ) -> None:
+        """Update user tier stats.
+
+        Args:
+            user_id: Internal user ID
+            tier: Difficulty tier string
+            **kwargs: Fields to update
+        """
+        if not kwargs:
+            return
+
+        await self.ensure_user_tier_stats(user_id, tier)
+
+        fields = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [user_id, tier]
+
+        await self.db.execute(
+            f"UPDATE user_tier_stats SET {fields} "
+            f"WHERE user_id = ? AND difficulty_tier = ?",
+            values,
+        )
+        await self.db.commit()
+
+    async def update_tier_streak(
+        self,
+        user_id: int,
+        tier: str,
+        answer_date: date,
+    ) -> tuple[int, bool]:
+        """Update user streak for a specific tier based on answer date.
+
+        Args:
+            user_id: Internal user ID
+            tier: Difficulty tier string
+            answer_date: Date of the answer
+
+        Returns:
+            Tuple of (new_streak, streak_increased)
+        """
+        await self.ensure_user_tier_stats(user_id, tier)
+        stats = await self.get_user_tier_stats(user_id, tier)
+
+        if not stats:
+            return (0, False)
+
+        last_answer = stats["last_answer_date"]
+        current_streak = stats["current_streak"]
+        longest_streak = stats["longest_streak"]
+
+        if last_answer is None:
+            new_streak = 1
+            streak_increased = True
+        else:
+            # Parse last_answer if it's a string
+            if isinstance(last_answer, str):
+                last_answer = date.fromisoformat(last_answer)
+
+            days_diff = (answer_date - last_answer).days
+
+            if days_diff == 0:
+                # Same day, no change
+                new_streak = current_streak
+                streak_increased = False
+            elif days_diff == 1:
+                # Consecutive day
+                new_streak = current_streak + 1
+                streak_increased = True
+            else:
+                # Streak broken
+                new_streak = 1
+                streak_increased = False
+
+        # Update longest if needed
+        new_longest = max(longest_streak, new_streak)
+
+        await self.update_user_tier_stats(
+            user_id,
+            tier,
+            current_streak=new_streak,
+            longest_streak=new_longest,
+            last_answer_date=answer_date.isoformat(),
+        )
+
+        return (new_streak, streak_increased)
+
+    async def add_tier_points(self, user_id: int, tier: str, points: int) -> int:
+        """Add points to user tier stats and return new total.
+
+        Args:
+            user_id: Internal user ID
+            tier: Difficulty tier string
+            points: Points to add
+
+        Returns:
+            New total points for this tier
+        """
+        await self.ensure_user_tier_stats(user_id, tier)
+        await self.db.execute(
+            """
+            UPDATE user_tier_stats
+            SET total_points = total_points + ?
+            WHERE user_id = ? AND difficulty_tier = ?
+            """,
+            (points, user_id, tier),
+        )
+        await self.db.commit()
+
+        stats = await self.get_user_tier_stats(user_id, tier)
+        return stats["total_points"] if stats else points
+
+    async def record_tier_answer(
+        self,
+        user_id: int,
+        tier: str,
+        is_correct: bool,
+    ) -> None:
+        """Record an answer for tier stats.
+
+        Args:
+            user_id: Internal user ID
+            tier: Difficulty tier string
+            is_correct: Whether the answer was correct
+        """
+        await self.ensure_user_tier_stats(user_id, tier)
+        await self.db.execute(
+            """
+            UPDATE user_tier_stats
+            SET total_answered = total_answered + 1,
+                correct_count = correct_count + ?
+            WHERE user_id = ? AND difficulty_tier = ?
+            """,
+            (1 if is_correct else 0, user_id, tier),
+        )
+        await self.db.commit()
+
+    async def get_question_pool_counts_by_tier(self) -> dict[str, dict[str, int]]:
+        """Get count of questions per difficulty tier and content area.
+
+        Returns:
+            Dict mapping tier to dict of content_area -> count
+        """
+        async with self.db.execute(
+            """
+            SELECT difficulty_tier, content_area, COUNT(*) as count
+            FROM questions
+            GROUP BY difficulty_tier, content_area
+            """
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result: dict[str, dict[str, int]] = {}
+            for row in rows:
+                tier = row["difficulty_tier"] or "easy"
+                if tier not in result:
+                    result[tier] = {}
+                result[tier][row["content_area"]] = row["count"]
+            return result
+
+    async def get_total_questions_by_tier(self) -> dict[str, int]:
+        """Get total question count per difficulty tier.
+
+        Returns:
+            Dict mapping tier to count
+        """
+        async with self.db.execute(
+            """
+            SELECT difficulty_tier, COUNT(*) as count
+            FROM questions
+            GROUP BY difficulty_tier
+            """
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {(row["difficulty_tier"] or "easy"): row["count"] for row in rows}
+
+    async def get_avg_unseen_questions_by_tier(
+        self,
+        days: int = 7,
+    ) -> dict[str, float]:
+        """Get average unseen questions per active user, grouped by tier.
+
+        Args:
+            days: Number of days to consider for active users
+
+        Returns:
+            Dict mapping tier to average unseen questions
+        """
+        # Get tier totals
+        tier_totals = await self.get_total_questions_by_tier()
+
+        # For each tier, calculate avg unseen for active users
+        result: dict[str, float] = {}
+
+        for tier, total in tier_totals.items():
+            async with self.db.execute(
+                """
+                SELECT AVG(? - seen_count) as avg_unseen
+                FROM (
+                    SELECT
+                        COALESCE(
+                            (SELECT COUNT(DISTINCT sq.question_id)
+                             FROM sent_questions sq
+                             JOIN questions q ON sq.question_id = q.id
+                             WHERE sq.user_id = ua.user_id
+                             AND q.difficulty_tier = ?),
+                            0
+                        ) as seen_count
+                    FROM (
+                        SELECT DISTINCT user_id
+                        FROM user_answers
+                        WHERE answered_at > datetime('now', ? || ' days')
+                    ) ua
+                ) user_stats
+                """,
+                (total, tier, f"-{days}"),
+            ) as cursor:
+                row = await cursor.fetchone()
+                avg = row["avg_unseen"] if row and row["avg_unseen"] else float(total)
+                result[tier] = avg
+
+        return result
+
+    # =========================================================================
+    # System Settings Operations
+    # =========================================================================
+
+    async def get_system_setting(self, key: str) -> Optional[str]:
+        """Get a system setting value by key.
+
+        Args:
+            key: Setting key
+
+        Returns:
+            Setting value string or None if not found
+        """
+        async with self.db.execute(
+            "SELECT value FROM system_settings WHERE key = ?",
+            (key,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row["value"] if row else None
+
+    async def get_system_setting_bool(
+        self, key: str, default: bool = True
+    ) -> bool:
+        """Get a system setting as a boolean.
+
+        Args:
+            key: Setting key
+            default: Default value if key not found
+
+        Returns:
+            Boolean value of the setting
+        """
+        value = await self.get_system_setting(key)
+        if value is None:
+            return default
+        return value.lower() in ("true", "1", "yes")
+
+    async def set_system_setting(
+        self,
+        key: str,
+        value: str,
+        updated_by: Optional[int] = None,
+    ) -> None:
+        """Set a system setting value.
+
+        Uses INSERT ... ON CONFLICT DO UPDATE (upsert).
+
+        Args:
+            key: Setting key
+            value: Setting value
+            updated_by: Telegram ID of admin who changed it
+        """
+        await self.db.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_at, updated_by)
+            VALUES (?, ?, CURRENT_TIMESTAMP, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at,
+                updated_by = excluded.updated_by
+            """,
+            (key, value, updated_by),
+        )
+        await self.db.commit()
+
+    # =========================================================================
+    # Analytics Operations (v7)
+    # =========================================================================
+
+    async def aggregate_daily_system_stats(
+        self,
+        target_date: date,
+    ) -> dict[str, Any]:
+        """
+        Compute system-wide daily statistics from raw tables.
+
+        Args:
+            target_date: The date to aggregate stats for
+
+        Returns:
+            Dict with all system metrics for the date
+        """
+        date_str = target_date.isoformat()
+        prev_date = (target_date - timedelta(days=1)).isoformat()
+        week_ago = (target_date - timedelta(days=7)).isoformat()
+
+        # Total and subscribed users
+        async with self.db.execute(
+            "SELECT COUNT(*) as total FROM users"
+        ) as cursor:
+            row = await cursor.fetchone()
+            total_users = row["total"] if row else 0
+
+        async with self.db.execute(
+            "SELECT COUNT(*) as total FROM users WHERE is_subscribed = 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            subscribed_users = row["total"] if row else 0
+
+        # Active users (7 days and 1 day)
+        async with self.db.execute(
+            """
+            SELECT COUNT(DISTINCT user_id) as count
+            FROM user_answers
+            WHERE DATE(answered_at) > ?
+            """,
+            (week_ago,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            active_users_7d = row["count"] if row else 0
+
+        async with self.db.execute(
+            """
+            SELECT COUNT(DISTINCT user_id) as count
+            FROM user_answers
+            WHERE DATE(answered_at) = ?
+            """,
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            active_users_1d = row["count"] if row else 0
+
+        # New users on this date
+        async with self.db.execute(
+            "SELECT COUNT(*) as count FROM users WHERE DATE(created_at) = ?",
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            new_users = row["count"] if row else 0
+
+        # Churned users (active 7-14 days ago but not in last 7 days)
+        two_weeks_ago = (target_date - timedelta(days=14)).isoformat()
+        async with self.db.execute(
+            """
+            SELECT COUNT(DISTINCT user_id) as count
+            FROM user_answers
+            WHERE DATE(answered_at) BETWEEN ? AND ?
+            AND user_id NOT IN (
+                SELECT DISTINCT user_id FROM user_answers
+                WHERE DATE(answered_at) > ?
+            )
+            """,
+            (two_weeks_ago, week_ago, week_ago),
+        ) as cursor:
+            row = await cursor.fetchone()
+            churned_users = row["count"] if row else 0
+
+        # Scheduled questions sent and answered
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count FROM sent_questions
+            WHERE DATE(sent_at) = ? AND is_scheduled = 1
+            """,
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            scheduled_sent = row["count"] if row else 0
+
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count
+            FROM user_answers ua
+            JOIN sent_questions sq ON ua.user_id = sq.user_id AND ua.question_id = sq.question_id
+            WHERE DATE(ua.answered_at) = ? AND sq.is_scheduled = 1
+            """,
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            scheduled_answered = row["count"] if row else 0
+
+        # On-demand answers (not from scheduled questions)
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count
+            FROM user_answers ua
+            LEFT JOIN sent_questions sq ON ua.user_id = sq.user_id
+                AND ua.question_id = sq.question_id AND sq.is_scheduled = 1
+            WHERE DATE(ua.answered_at) = ? AND sq.id IS NULL
+            """,
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            ondemand_answered = row["count"] if row else 0
+
+        # Bonus answers
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count
+            FROM user_answers ua
+            JOIN sent_questions sq ON ua.user_id = sq.user_id AND ua.question_id = sq.question_id
+            WHERE DATE(ua.answered_at) = ? AND sq.is_bonus = 1
+            """,
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            bonus_answered = row["count"] if row else 0
+
+        # Correct/incorrect counts and response time
+        async with self.db.execute(
+            """
+            SELECT
+                SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as correct,
+                SUM(CASE WHEN NOT is_correct THEN 1 ELSE 0 END) as incorrect,
+                SUM(COALESCE(response_time_ms, 0)) as total_time,
+                SUM(CASE WHEN response_time_ms IS NOT NULL THEN 1 ELSE 0 END) as time_count
+            FROM user_answers
+            WHERE DATE(answered_at) = ?
+            """,
+            (date_str,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            total_correct = row["correct"] if row and row["correct"] else 0
+            total_incorrect = row["incorrect"] if row and row["incorrect"] else 0
+            total_response_time_ms = row["total_time"] if row and row["total_time"] else 0
+            response_count = row["time_count"] if row and row["time_count"] else 0
+
+        # Content area stats
+        async with self.db.execute(
+            """
+            SELECT
+                q.content_area,
+                COUNT(*) as answered,
+                SUM(CASE WHEN ua.is_correct THEN 1 ELSE 0 END) as correct
+            FROM user_answers ua
+            JOIN questions q ON ua.question_id = q.id
+            WHERE DATE(ua.answered_at) = ?
+            GROUP BY q.content_area
+            """,
+            (date_str,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            content_area_stats = {
+                row["content_area"]: {
+                    "answered": row["answered"],
+                    "correct": row["correct"],
+                }
+                for row in rows
+            }
+
+        # Get sent counts by content area
+        async with self.db.execute(
+            """
+            SELECT
+                q.content_area,
+                COUNT(*) as sent
+            FROM sent_questions sq
+            JOIN questions q ON sq.question_id = q.id
+            WHERE DATE(sq.sent_at) = ?
+            GROUP BY q.content_area
+            """,
+            (date_str,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            for row in rows:
+                area = row["content_area"]
+                if area not in content_area_stats:
+                    content_area_stats[area] = {"answered": 0, "correct": 0}
+                content_area_stats[area]["sent"] = row["sent"]
+
+        # Tier stats
+        async with self.db.execute(
+            """
+            SELECT
+                q.difficulty_tier,
+                COUNT(*) as answered,
+                SUM(CASE WHEN ua.is_correct THEN 1 ELSE 0 END) as correct
+            FROM user_answers ua
+            JOIN questions q ON ua.question_id = q.id
+            WHERE DATE(ua.answered_at) = ?
+            GROUP BY q.difficulty_tier
+            """,
+            (date_str,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            tier_stats = {
+                (row["difficulty_tier"] or "easy"): {
+                    "answered": row["answered"],
+                    "correct": row["correct"],
+                }
+                for row in rows
+            }
+
+        # Get sent counts by tier
+        async with self.db.execute(
+            """
+            SELECT
+                q.difficulty_tier,
+                COUNT(*) as sent
+            FROM sent_questions sq
+            JOIN questions q ON sq.question_id = q.id
+            WHERE DATE(sq.sent_at) = ?
+            GROUP BY q.difficulty_tier
+            """,
+            (date_str,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            for row in rows:
+                tier = row["difficulty_tier"] or "easy"
+                if tier not in tier_stats:
+                    tier_stats[tier] = {"answered": 0, "correct": 0}
+                tier_stats[tier]["sent"] = row["sent"]
+
+        return {
+            "snapshot_date": date_str,
+            "total_users": total_users,
+            "subscribed_users": subscribed_users,
+            "active_users_7d": active_users_7d,
+            "active_users_1d": active_users_1d,
+            "new_users": new_users,
+            "churned_users": churned_users,
+            "scheduled_sent": scheduled_sent,
+            "scheduled_answered": scheduled_answered,
+            "ondemand_answered": ondemand_answered,
+            "bonus_answered": bonus_answered,
+            "total_correct": total_correct,
+            "total_incorrect": total_incorrect,
+            "total_response_time_ms": total_response_time_ms,
+            "response_count": response_count,
+            "content_area_stats": content_area_stats,
+            "tier_stats": tier_stats,
+        }
+
+    async def aggregate_hourly_activity(
+        self,
+        target_date: date,
+    ) -> list[dict[str, Any]]:
+        """
+        Compute hourly activity breakdown for a date.
+
+        Args:
+            target_date: The date to aggregate hourly stats for
+
+        Returns:
+            List of dicts, one per hour (0-23)
+        """
+        date_str = target_date.isoformat()
+
+        async with self.db.execute(
+            """
+            SELECT
+                CAST(strftime('%H', answered_at) AS INTEGER) as hour_utc,
+                COUNT(*) as answers_count,
+                SUM(CASE WHEN ua.is_correct THEN 1 ELSE 0 END) as correct_count,
+                COUNT(DISTINCT ua.user_id) as unique_users,
+                SUM(COALESCE(ua.response_time_ms, 0)) as total_response_time_ms
+            FROM user_answers ua
+            WHERE DATE(answered_at) = ?
+            GROUP BY hour_utc
+            ORDER BY hour_utc
+            """,
+            (date_str,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            hourly_data = {row["hour_utc"]: dict(row) for row in rows}
+
+        # Get tier breakdown per hour
+        async with self.db.execute(
+            """
+            SELECT
+                CAST(strftime('%H', ua.answered_at) AS INTEGER) as hour_utc,
+                q.difficulty_tier,
+                COUNT(*) as count
+            FROM user_answers ua
+            JOIN questions q ON ua.question_id = q.id
+            WHERE DATE(ua.answered_at) = ?
+            GROUP BY hour_utc, q.difficulty_tier
+            """,
+            (date_str,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            for row in rows:
+                hour = row["hour_utc"]
+                tier = row["difficulty_tier"] or "easy"
+                if hour in hourly_data:
+                    if "tier_breakdown" not in hourly_data[hour]:
+                        hourly_data[hour]["tier_breakdown"] = {}
+                    hourly_data[hour]["tier_breakdown"][tier] = row["count"]
+
+        # Fill in all 24 hours with defaults
+        result = []
+        for hour in range(24):
+            if hour in hourly_data:
+                data = hourly_data[hour]
+                result.append({
+                    "activity_date": date_str,
+                    "hour_utc": hour,
+                    "answers_count": data["answers_count"],
+                    "correct_count": data["correct_count"],
+                    "unique_users": data["unique_users"],
+                    "total_response_time_ms": data["total_response_time_ms"],
+                    "tier_breakdown": data.get("tier_breakdown", {}),
+                })
+            else:
+                result.append({
+                    "activity_date": date_str,
+                    "hour_utc": hour,
+                    "answers_count": 0,
+                    "correct_count": 0,
+                    "unique_users": 0,
+                    "total_response_time_ms": 0,
+                    "tier_breakdown": {},
+                })
+
+        return result
+
+    async def aggregate_user_daily_stats(
+        self,
+        user_id: int,
+        target_date: date,
+        user_timezone: str,
+    ) -> dict[str, Any]:
+        """
+        Compute daily stats for a specific user.
+
+        Args:
+            user_id: Internal user ID
+            target_date: The date to aggregate stats for
+            user_timezone: User's timezone for the snapshot
+
+        Returns:
+            Dict with user's daily metrics
+        """
+        date_str = target_date.isoformat()
+
+        # Scheduled received
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count FROM sent_questions
+            WHERE user_id = ? AND DATE(sent_at) = ? AND is_scheduled = 1
+            """,
+            (user_id, date_str),
+        ) as cursor:
+            row = await cursor.fetchone()
+            scheduled_received = row["count"] if row else 0
+
+        # Scheduled answered
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count
+            FROM user_answers ua
+            JOIN sent_questions sq ON ua.user_id = sq.user_id AND ua.question_id = sq.question_id
+            WHERE ua.user_id = ? AND DATE(ua.answered_at) = ? AND sq.is_scheduled = 1
+            """,
+            (user_id, date_str),
+        ) as cursor:
+            row = await cursor.fetchone()
+            scheduled_answered = row["count"] if row else 0
+
+        # On-demand answered
+        async with self.db.execute(
+            """
+            SELECT COUNT(*) as count
+            FROM user_answers ua
+            LEFT JOIN sent_questions sq ON ua.user_id = sq.user_id
+                AND ua.question_id = sq.question_id AND sq.is_scheduled = 1
+            WHERE ua.user_id = ? AND DATE(ua.answered_at) = ? AND sq.id IS NULL
+            """,
+            (user_id, date_str),
+        ) as cursor:
+            row = await cursor.fetchone()
+            ondemand_answered = row["count"] if row else 0
+
+        # Correct/incorrect and response time
+        async with self.db.execute(
+            """
+            SELECT
+                SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as correct,
+                SUM(CASE WHEN NOT is_correct THEN 1 ELSE 0 END) as incorrect,
+                SUM(COALESCE(response_time_ms, 0)) as total_time
+            FROM user_answers
+            WHERE user_id = ? AND DATE(answered_at) = ?
+            """,
+            (user_id, date_str),
+        ) as cursor:
+            row = await cursor.fetchone()
+            correct_count = row["correct"] if row and row["correct"] else 0
+            incorrect_count = row["incorrect"] if row and row["incorrect"] else 0
+            total_response_time_ms = row["total_time"] if row and row["total_time"] else 0
+
+        # Content area breakdown
+        async with self.db.execute(
+            """
+            SELECT
+                q.content_area,
+                COUNT(*) as answered,
+                SUM(CASE WHEN ua.is_correct THEN 1 ELSE 0 END) as correct
+            FROM user_answers ua
+            JOIN questions q ON ua.question_id = q.id
+            WHERE ua.user_id = ? AND DATE(ua.answered_at) = ?
+            GROUP BY q.content_area
+            """,
+            (user_id, date_str),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            content_area_breakdown = {
+                row["content_area"]: {
+                    "answered": row["answered"],
+                    "correct": row["correct"],
+                }
+                for row in rows
+            }
+
+        # Tier breakdown
+        async with self.db.execute(
+            """
+            SELECT
+                q.difficulty_tier,
+                COUNT(*) as answered,
+                SUM(CASE WHEN ua.is_correct THEN 1 ELSE 0 END) as correct
+            FROM user_answers ua
+            JOIN questions q ON ua.question_id = q.id
+            WHERE ua.user_id = ? AND DATE(ua.answered_at) = ?
+            GROUP BY q.difficulty_tier
+            """,
+            (user_id, date_str),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            tier_breakdown = {
+                (row["difficulty_tier"] or "easy"): {
+                    "answered": row["answered"],
+                    "correct": row["correct"],
+                }
+                for row in rows
+            }
+
+        # Get streak value
+        stats = await self.get_user_stats(user_id)
+        streak_value = stats["current_streak"] if stats else 0
+
+        # Was active (answered at least one question)
+        was_active = (correct_count + incorrect_count) > 0
+
+        return {
+            "user_id": user_id,
+            "snapshot_date": date_str,
+            "user_timezone": user_timezone,
+            "scheduled_received": scheduled_received,
+            "scheduled_answered": scheduled_answered,
+            "ondemand_answered": ondemand_answered,
+            "correct_count": correct_count,
+            "incorrect_count": incorrect_count,
+            "total_response_time_ms": total_response_time_ms,
+            "content_area_breakdown": content_area_breakdown,
+            "tier_breakdown": tier_breakdown,
+            "streak_value": streak_value,
+            "was_active": was_active,
+        }
+
+    async def get_active_user_ids_in_period(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> set[int]:
+        """
+        Get user IDs who answered questions in a date range.
+
+        Args:
+            start_date: Start of period (inclusive)
+            end_date: End of period (inclusive)
+
+        Returns:
+            Set of internal user IDs
+        """
+        async with self.db.execute(
+            """
+            SELECT DISTINCT user_id
+            FROM user_answers
+            WHERE DATE(answered_at) BETWEEN ? AND ?
+            """,
+            (start_date.isoformat(), end_date.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["user_id"] for row in rows}
+
+    async def get_new_user_ids_in_period(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> set[int]:
+        """
+        Get user IDs who joined in a date range.
+
+        Args:
+            start_date: Start of period (inclusive)
+            end_date: End of period (inclusive)
+
+        Returns:
+            Set of internal user IDs
+        """
+        async with self.db.execute(
+            """
+            SELECT id
+            FROM users
+            WHERE DATE(created_at) BETWEEN ? AND ?
+            """,
+            (start_date.isoformat(), end_date.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["id"] for row in rows}
+
+    async def save_daily_system_snapshot(
+        self,
+        data: dict[str, Any],
+    ) -> int:
+        """
+        Store a daily system snapshot.
+
+        Args:
+            data: Snapshot data from aggregate_daily_system_stats
+
+        Returns:
+            ID of the inserted record
+        """
+        content_area_json = json.dumps(data.get("content_area_stats", {}))
+        tier_json = json.dumps(data.get("tier_stats", {}))
+
+        async with self.db.execute(
+            """
+            INSERT OR REPLACE INTO daily_system_snapshots
+            (snapshot_date, total_users, subscribed_users, active_users_7d, active_users_1d,
+             new_users, churned_users, scheduled_sent, scheduled_answered, ondemand_answered,
+             bonus_answered, total_correct, total_incorrect, total_response_time_ms,
+             response_count, content_area_stats, tier_stats)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["snapshot_date"],
+                data["total_users"],
+                data["subscribed_users"],
+                data["active_users_7d"],
+                data["active_users_1d"],
+                data["new_users"],
+                data["churned_users"],
+                data["scheduled_sent"],
+                data["scheduled_answered"],
+                data["ondemand_answered"],
+                data["bonus_answered"],
+                data["total_correct"],
+                data["total_incorrect"],
+                data["total_response_time_ms"],
+                data["response_count"],
+                content_area_json,
+                tier_json,
+            ),
+        ) as cursor:
+            await self.db.commit()
+            return cursor.lastrowid or 0
+
+    async def save_hourly_activity(
+        self,
+        hourly_data: list[dict[str, Any]],
+    ) -> int:
+        """
+        Store hourly activity records for a date.
+
+        Args:
+            hourly_data: List of hourly records from aggregate_hourly_activity
+
+        Returns:
+            Number of records saved
+        """
+        count = 0
+        for data in hourly_data:
+            tier_json = json.dumps(data.get("tier_breakdown", {}))
+            await self.db.execute(
+                """
+                INSERT OR REPLACE INTO hourly_activity
+                (activity_date, hour_utc, answers_count, correct_count, unique_users,
+                 total_response_time_ms, tier_breakdown)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data["activity_date"],
+                    data["hour_utc"],
+                    data["answers_count"],
+                    data["correct_count"],
+                    data["unique_users"],
+                    data["total_response_time_ms"],
+                    tier_json,
+                ),
+            )
+            count += 1
+        await self.db.commit()
+        return count
+
+    async def save_user_daily_snapshot(
+        self,
+        data: dict[str, Any],
+    ) -> int:
+        """
+        Store a user daily snapshot.
+
+        Args:
+            data: Snapshot data from aggregate_user_daily_stats
+
+        Returns:
+            ID of the inserted record
+        """
+        content_area_json = json.dumps(data.get("content_area_breakdown", {}))
+        tier_json = json.dumps(data.get("tier_breakdown", {}))
+
+        async with self.db.execute(
+            """
+            INSERT OR REPLACE INTO user_daily_snapshots
+            (user_id, snapshot_date, user_timezone, scheduled_received, scheduled_answered,
+             ondemand_answered, correct_count, incorrect_count, total_response_time_ms,
+             content_area_breakdown, tier_breakdown, streak_value, was_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["user_id"],
+                data["snapshot_date"],
+                data["user_timezone"],
+                data["scheduled_received"],
+                data["scheduled_answered"],
+                data["ondemand_answered"],
+                data["correct_count"],
+                data["incorrect_count"],
+                data["total_response_time_ms"],
+                content_area_json,
+                tier_json,
+                data["streak_value"],
+                data["was_active"],
+            ),
+        ) as cursor:
+            await self.db.commit()
+            return cursor.lastrowid or 0
+
+    async def save_weekly_retention_snapshot(
+        self,
+        data: dict[str, Any],
+    ) -> int:
+        """
+        Store a weekly retention snapshot.
+
+        Args:
+            data: Retention data with week_start and metrics
+
+        Returns:
+            ID of the inserted record
+        """
+        tier_json = json.dumps(data.get("tier_retention", {}))
+
+        async with self.db.execute(
+            """
+            INSERT OR REPLACE INTO weekly_retention_snapshots
+            (week_start, active_users, retained_from_last_week, churned_this_week,
+             reactivated_this_week, new_this_week, retention_rate, churn_rate, tier_retention)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["week_start"],
+                data["active_users"],
+                data["retained_from_last_week"],
+                data["churned_this_week"],
+                data["reactivated_this_week"],
+                data["new_this_week"],
+                data["retention_rate"],
+                data["churn_rate"],
+                tier_json,
+            ),
+        ) as cursor:
+            await self.db.commit()
+            return cursor.lastrowid or 0
+
+    async def get_daily_system_snapshots_range(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        """
+        Get daily system snapshots for a date range.
+
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+
+        Returns:
+            List of snapshot dicts
+        """
+        async with self.db.execute(
+            """
+            SELECT * FROM daily_system_snapshots
+            WHERE snapshot_date BETWEEN ? AND ?
+            ORDER BY snapshot_date ASC
+            """,
+            (start_date.isoformat(), end_date.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("content_area_stats"):
+                    try:
+                        d["content_area_stats"] = json.loads(d["content_area_stats"])
+                    except json.JSONDecodeError:
+                        d["content_area_stats"] = {}
+                if d.get("tier_stats"):
+                    try:
+                        d["tier_stats"] = json.loads(d["tier_stats"])
+                    except json.JSONDecodeError:
+                        d["tier_stats"] = {}
+                result.append(d)
+            return result
+
+    async def get_hourly_activity_pattern(
+        self,
+        days: int = 7,
+    ) -> dict[int, dict[str, Any]]:
+        """
+        Get aggregated hourly activity pattern over N days.
+
+        Args:
+            days: Number of days to aggregate
+
+        Returns:
+            Dict mapping hour (0-23) to aggregated metrics
+        """
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+        async with self.db.execute(
+            """
+            SELECT
+                hour_utc,
+                SUM(answers_count) as total_answers,
+                SUM(correct_count) as total_correct,
+                AVG(unique_users) as avg_users,
+                SUM(total_response_time_ms) as total_time
+            FROM hourly_activity
+            WHERE activity_date > ?
+            GROUP BY hour_utc
+            ORDER BY hour_utc
+            """,
+            (cutoff,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {
+                row["hour_utc"]: {
+                    "total_answers": row["total_answers"],
+                    "total_correct": row["total_correct"],
+                    "avg_users": row["avg_users"],
+                    "total_time": row["total_time"],
+                }
+                for row in rows
+            }
+
+    async def get_user_daily_snapshots(
+        self,
+        user_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        """
+        Get daily snapshots for a specific user.
+
+        Args:
+            user_id: Internal user ID
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+
+        Returns:
+            List of snapshot dicts
+        """
+        async with self.db.execute(
+            """
+            SELECT * FROM user_daily_snapshots
+            WHERE user_id = ? AND snapshot_date BETWEEN ? AND ?
+            ORDER BY snapshot_date ASC
+            """,
+            (user_id, start_date.isoformat(), end_date.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("content_area_breakdown"):
+                    try:
+                        d["content_area_breakdown"] = json.loads(d["content_area_breakdown"])
+                    except json.JSONDecodeError:
+                        d["content_area_breakdown"] = {}
+                if d.get("tier_breakdown"):
+                    try:
+                        d["tier_breakdown"] = json.loads(d["tier_breakdown"])
+                    except json.JSONDecodeError:
+                        d["tier_breakdown"] = {}
+                result.append(d)
+            return result
+
+    async def get_weekly_retention_snapshots_range(
+        self,
+        start_week: date,
+        end_week: date,
+    ) -> list[dict[str, Any]]:
+        """
+        Get weekly retention snapshots for a date range.
+
+        Args:
+            start_week: Start week (Monday, inclusive)
+            end_week: End week (Monday, inclusive)
+
+        Returns:
+            List of retention snapshot dicts
+        """
+        async with self.db.execute(
+            """
+            SELECT * FROM weekly_retention_snapshots
+            WHERE week_start BETWEEN ? AND ?
+            ORDER BY week_start ASC
+            """,
+            (start_week.isoformat(), end_week.isoformat()),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            result = []
+            for row in rows:
+                d = dict(row)
+                if d.get("tier_retention"):
+                    try:
+                        d["tier_retention"] = json.loads(d["tier_retention"])
+                    except json.JSONDecodeError:
+                        d["tier_retention"] = {}
+                result.append(d)
+            return result
+
+    async def get_users_by_timezone(self, timezone: str) -> list[dict[str, Any]]:
+        """
+        Get all users in a specific timezone.
+
+        Args:
+            timezone: Timezone string
+
+        Returns:
+            List of user dicts
+        """
+        async with self.db.execute(
+            "SELECT * FROM users WHERE timezone = ?",
+            (timezone,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_users_active_with_tier(
+        self,
+        start_date: date,
+        end_date: date,
+        tier: str,
+    ) -> set[int]:
+        """
+        Get user IDs who answered questions of a specific tier in a period.
+
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            tier: Difficulty tier
+
+        Returns:
+            Set of internal user IDs
+        """
+        async with self.db.execute(
+            """
+            SELECT DISTINCT ua.user_id
+            FROM user_answers ua
+            JOIN questions q ON ua.question_id = q.id
+            WHERE DATE(ua.answered_at) BETWEEN ? AND ?
+            AND q.difficulty_tier = ?
+            """,
+            (start_date.isoformat(), end_date.isoformat(), tier),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return {row["user_id"] for row in rows}
+
 
 # Global repository instance
 _repository: Optional[Repository] = None
